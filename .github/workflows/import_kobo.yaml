@@ -1,0 +1,47 @@
+
+name: Importation_kobo
+
+on:
+  workflow_dispatch:
+
+
+jobs:
+  importation:
+    permissions:
+      contents: write
+      pages: write
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+        
+      - name: install R
+        uses: r-lib/actions/setup-r@v2
+        
+      - name: Install packages
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::tidyverse
+            any::robotoolbox
+      - name: importation données
+        run: Rscript -e 'source("importation.R")'
+        env:
+          MY_TOKEN: ${{ secrets.MY_TOKEN_GHA }}
+          MY_UID: ${{ secrets.MY_UID_GHA }}
+          
+      - name: commit results
+        run: |
+          git config --local user.email "kn.samati@gmail.com"
+          git config --local user.name "knsamati"
+          git add df.rds
+          git commit -m 'Data updated' || echo "No changes to commit"
+          git push origin || echo "No changes to commit"
+        
+
+
+
+
+
+
