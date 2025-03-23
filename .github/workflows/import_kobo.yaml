@@ -28,15 +28,6 @@ jobs:
       - name: importation données
         run: Rscript -e 'source("importation.R")'
         env:
-<<<<<<< HEAD
-          MY_TOKEN: ${{ secrets.my_token }}
-          MY_UID: ${{ secrets.my_uid }}
-          
-      - name: commit results
-        run: |
-          git config --local user.email "somaben791@gmail.com"
-          git config --local user.name "Ben10-som"
-=======
           MY_TOKEN: ${{ secrets.MY_TOKEN_GHA }}
           MY_UID: ${{ secrets.MY_UID_GHA }}
           
@@ -44,7 +35,6 @@ jobs:
         run: |
           git config --local user.email "kn.samati@gmail.com"
           git config --local user.name "knsamati"
->>>>>>> 301daf65e540c5448a6c596c9f03617056329324
           git add df.rds
           git commit -m 'Data updated' || echo "No changes to commit"
           git push origin || echo "No changes to commit"
