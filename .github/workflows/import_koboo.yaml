@@ -24,8 +24,8 @@ jobs:
     run: Rdcript -e 'source("import_data.R")'
     env:
       env:
-          MY_TOKEN: ${{ secrets.MY_TOKEN_GHA }}
-          MY_UID: ${{ secrets.MY_UID_GHA }}
+          MY_TOKEN: ${{ secrets.my_token }}
+          MY_UID: ${{ secrets.my_uid}}
           
       - name: commit results
         run: |
