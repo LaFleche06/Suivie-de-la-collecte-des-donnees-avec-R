@@ -1,0 +1,2 @@
+my_token=4d2d05b02a89fc97fe59d9b8a77337b47649ef59
+my_uid=a7XX5gzqV4VvVf9LLwiUuH
