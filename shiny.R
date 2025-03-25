@@ -4,15 +4,26 @@ library(ggplot2)
 library(dplyr)
 library(tibble)
 library(gridExtra)
-library(tidyverse)
-library(robotoolbox)
 
-# Configuration de l'API KoboToolbox
-kobo_setup(url = "https://kf.kobotoolbox.org", token = Sys.getenv("my_token"))
+# Générer une base fictive
+set.seed(123)
+fake_data <- tibble(
+  Age = sample(18:80, 50, replace = TRUE),
+  salaire = sample(50000:500000, 50, replace = TRUE),
+  depenses = sample(30000:600000, 50, replace = TRUE),
+  Nombre = sample(1:15, 50, replace = TRUE)
+)
 
-# Récupération de l'asset spécifique
-asset <- kobo_asset(Sys.getenv("my_uid"))
-df <- asset %>% kobo_data()
+# Sauvegarder la base fictive dans un fichier CSV
+write.csv(fake_data, "securite_fictive.csv", row.names = FALSE)
+
+# Charger la base de données par défaut
+base_path <- "securite_fictive.csv"
+if (file.exists(base_path)) {
+  base_data <- read.csv(base_path, sep=",", stringsAsFactors = FALSE)
+} else {
+  base_data <- fake_data
+}
 
 # Interface utilisateur
 ui <- fluidPage(
@@ -37,7 +48,7 @@ ui <- fluidPage(
 server <- function(input, output) {
   data <- reactive({
     if (is.null(input$file)) {
-      return(df)
+      return(base_data)
     } else {
       return(read.csv(input$file$datapath, sep=",", stringsAsFactors = FALSE))
     }
