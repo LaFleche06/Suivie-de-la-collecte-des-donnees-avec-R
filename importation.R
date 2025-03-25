@@ -8,10 +8,10 @@ library(tidyverse)
 library(robotoolbox)
 
 # Configuration de l'API KoboToolbox
-kobo_setup(url = "https://kf.kobotoolbox.org", token = Sys.getenv("my_token"))
+kobo_setup(url = "https://kf.kobotoolbox.org", token = Sys.getenv("4d2d05b02a89fc97fe59d9b8a77337b47649ef59") )
 
 # Récupération de l'asset spécifique
-asset <- kobo_asset(Sys.getenv("my_uid"))
+asset <- kobo_asset(Sys.getenv("aSAa9CCRcCunWL75V46Ky8"))
 df <- asset %>% kobo_data()
 
 # Interface utilisateur
@@ -26,8 +26,8 @@ ui <- fluidPage(
       tabsetPanel(
         tabPanel("Données", DTOutput("table")),
         tabPanel("Graphiques", plotOutput("graphique")),
-        tabPanel("Statistiques Descriptives", verbatimTextOutput("stats")),
-        tabPanel("Incohérences", verbatimTextOutput("incoherences"))
+        tabPanel("Statistiques Descriptives", DTOutput("stats")),
+        tabPanel("Incohérences", DTOutput("incoherences"))
       )
     )
   )
@@ -71,30 +71,39 @@ server <- function(input, output) {
     grid.arrange(p1, p2, p3, p4, ncol = 2)
   })
   
-  output$stats <- renderPrint({
+  output$stats <- renderDT({
     req(data())
-    summary(data())
+    datatable(summary(data()), options = list(autoWidth = TRUE))
   })
   
-  output$incoherences <- renderPrint({
+  output$incoherences <- renderDT({
     req(data())
     df <- data()
-    incoherences <- list()
+    incoherences <- tibble(Type = character(), Détails = list())
     
     if("Age" %in% names(df)) {
-      incoherences$age <- df %>% filter(Age < 18 | Age > 100)
+      incoh_age <- df %>% filter(Age < 18 | Age > 100)
+      if (nrow(incoh_age) > 0) {
+        incoherences <- add_row(incoherences, Type = "Âge incohérent", Détails = list(incoh_age))
+      }
     }
     if("salaire" %in% names(df) & "depenses" %in% names(df)) {
-      incoherences$depenses <- df %>% filter(depenses > salaire)
+      incoh_dep <- df %>% filter(depenses > salaire)
+      if (nrow(incoh_dep) > 0) {
+        incoherences <- add_row(incoherences, Type = "Dépenses > Salaire", Détails = list(incoh_dep))
+      }
     }
     if("Nombre" %in% names(df)) {
-      incoherences$menage <- df %>% filter(Nombre < 0)
+      incoh_menage <- df %>% filter(Nombre < 0)
+      if (nrow(incoh_menage) > 0) {
+        incoherences <- add_row(incoherences, Type = "Nombre négatif", Détails = list(incoh_menage))
+      }
     }
     
-    if (length(incoherences) == 0) {
-      print("Aucune incohérence détectée.")
+    if (nrow(incoherences) == 0) {
+      datatable(data.frame(Message = "Aucune incohérence détectée."), options = list(dom = 't'))
     } else {
-      print(incoherences)
+      datatable(incoherences, options = list(autoWidth = TRUE))
     }
   })
 }
