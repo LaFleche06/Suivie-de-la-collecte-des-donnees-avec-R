@@ -25,6 +25,15 @@ jobs:
           packages: |
             any::tidyverse
             any::robotoolbox
+            any::tidyverse
+            any::robotoolbox
+            any::shiny
+            any::DT
+            any::ggplot2
+            any::dplyr
+            any::tibble
+            any::gridExtra
+
       - name: importation données
         run: Rscript -e 'source("importation.R")'
         env:

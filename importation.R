@@ -8,10 +8,10 @@ library(tidyverse)
 library(robotoolbox)
 
 # Configuration de l'API KoboToolbox
-kobo_setup(url = "https://kf.kobotoolbox.org", token = Sys.getenv("4d2d05b02a89fc97fe59d9b8a77337b47649ef59") )
+kobo_setup(url = "https://kf.kobotoolbox.org", token = Sys.getenv("my_token") )
 
 # Récupération de l'asset spécifique
-asset <- kobo_asset(Sys.getenv("aSAa9CCRcCunWL75V46Ky8"))
+asset <- kobo_asset(Sys.getenv("my_uid"))
 df <- asset %>% kobo_data()
 
 # Interface utilisateur
