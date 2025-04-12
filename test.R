@@ -1,3 +1,4 @@
+
 library(shiny)
 library(shinydashboard)
 library(leaflet)
@@ -174,18 +175,19 @@ AlerteEnquete <- R6::R6Class("AlerteEnquete",
 
 # Préparation des zones autorisées
 library(sf)
+# Préparation des zones autorisées
 zones_autorisees <- list(
   st_polygon(list(rbind(
-    c(-4.0175, 5.3364),
+    c(-4.0175, 5.3364),  # Longitude, Latitude
     c(-3.9, 5.4),
     c(-3.9, 5.2),
-    c(-4.0175, 5.3364)
+    c(-4.0175, 5.3364)   # Doit être identique au premier point pour fermer le polygone
   ))),
   st_polygon(list(rbind(
-    c(5.2895, 6.8275),
-    c(5.3, 6.9),
-    c(5.2, 6.8),
-    c(5.2895, 6.8275)
+    c(-4.1, 5.3),        # Deuxième zone plus réaliste
+    c(-4.0, 5.4),
+    c(-4.0, 5.2),
+    c(-4.1, 5.3)         # Doit être identique au premier point
   )))
 )
 
