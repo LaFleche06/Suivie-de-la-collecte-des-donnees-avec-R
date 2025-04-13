@@ -7,173 +7,127 @@ library(DT)
 library(shinydashboard)
 library(shinyalert)
 library(dplyr)
-library(writexl)  # Pour l'export en Excel
+library(writexl)
+library(ggplot2)
+library(tidyr)
 
+# Configuration API KoboToolbox
+token <- Sys.getenv("token")
+form_id <- Sys.getenv("form_id")
 
-# -- Configuration API KoboToolbox
-token <- "6f8bb50a807ae9e7fda9fba40566da0f9c3383c5"
-form_id <- "a9okT245N3K6EBHaW5kEWu"
 url <- paste0("https://kf.kobotoolbox.org/api/v2/assets/", form_id, "/data/?format=json")
 
-# -- Fonction pour récupérer les données depuis l'API KoboToolbox
+# Fonction pour récupérer les données depuis l'API KoboToolbox
 fetch_data <- function() {
   tryCatch({
     response <- GET(url, add_headers(Authorization = paste("Token", token)))
-    
     if (status_code(response) == 200) {
       content_text <- content(response, "text", encoding = "UTF-8")
       data <- fromJSON(content_text, flatten = TRUE)
-      
-      if ("results" %in% names(data) && length(data$results) > 0) {
-        return(as.data.frame(data$results))
-      } else {
-        return(NULL)
-      }
-    } else {
-      return(NULL)
+      if ("results" %in% names(data) && length(data$results) > 0) return(as.data.frame(data$results))
     }
-  }, error = function(e) {
     return(NULL)
-  })
+  }, error = function(e) NULL)
 }
 
-# -- Fonction corrigée pour vérifier les incohérences dans les données
+# Vérification des incohérences dans les données
 check_incoherence <- function(data) {
   if (is.null(data) || nrow(data) == 0) return(data.frame())
   
-  # Initialisation des colonnes pour les détails des incohérences
+  # Initialisation des colonnes d'alerte
   data$alertes <- "Aucune incohérence"
   data$details_incoherence <- NA
   
-  # Vérification de la présence des coordonnées GPS
-  # Gérer correctement les chaînes vides et les valeurs nulles
-  gps_missing <- FALSE
-  
+  # Vérification des coordonnées GPS
   if ("_geolocation" %in% colnames(data)) {
-    if (is.character(data$`_geolocation`)) {
-      gps_missing <- is.na(data$`_geolocation`) | data$`_geolocation` == ""
-    } else if (is.list(data$`_geolocation`)) {
-      gps_missing <- sapply(data$`_geolocation`, function(x) {
-        is.null(x) || length(x) == 0 || (length(x) > 0 && (is.na(x[1]) || is.na(x[2])))
-      })
-    }
-  } else {
-    # Si latitude et longitude sont directement présentes
-    if ("latitude" %in% colnames(data) && "longitude" %in% colnames(data)) {
-      gps_missing <- is.na(data$latitude) | is.na(data$longitude)
-    }
-  }
-  
-  if (any(gps_missing)) {
-    data$alertes[gps_missing] <- "Coordonnées GPS manquantes"
-    data$details_incoherence[gps_missing] <- "Les coordonnées GPS n'ont pas été enregistrées lors de la collecte."
-  }
-  
-  # Vérification des dépenses par rapport aux revenus
-  depense_col <- "Quelle_est_la_d_pens_e_du_m_nage_exact"
-  depense_mensuelle_col <- "Quel_est_la_d_pense_mensuelle_du_m_nage_"
-  
-  if (depense_col %in% colnames(data) && depense_mensuelle_col %in% colnames(data)) {
-    # Convertir en numérique si ce sont des chaînes
-    if (!is.numeric(data[[depense_col]])) {
-      data[[depense_col]] <- as.numeric(as.character(data[[depense_col]]))
-    }
-    if (!is.numeric(data[[depense_mensuelle_col]])) {
-      data[[depense_mensuelle_col]] <- as.numeric(as.character(data[[depense_mensuelle_col]]))
+    gps_missing <- if(is.character(data$`_geolocation`)) {
+      is.na(data$`_geolocation`) | data$`_geolocation` == ""
+    } else {
+      sapply(data$`_geolocation`, function(x) is.null(x) || length(x) == 0 || 
+               (length(x) > 0 && (is.na(x[1]) || is.na(x[2]))))
     }
     
-    # Vérifier si les dépenses exactes sont vraiment supérieures
-    # en tenant compte d'une marge de tolérance
-    dep_incoherent <- !is.na(data[[depense_col]]) & 
-      !is.na(data[[depense_mensuelle_col]]) &
-      data[[depense_col]] > (data[[depense_mensuelle_col]] * 10000 * 1.2) # 20% de marge de tolérance
+    if (any(gps_missing)) {
+      data$alertes[gps_missing] <- "Coordonnées GPS manquantes"
+      data$details_incoherence[gps_missing] <- "Les coordonnées GPS n'ont pas été enregistrées lors de la collecte."
+    }
+  }
+  
+  # Vérification des dépenses mensuelles vs exactes
+  depense_cols <- c(mensuelle = "Quel_est_la_d_pense_mensuelle_du_m_nage_", 
+                    exacte = "Quelle_est_la_d_pens_e_du_m_nage_exact_")
+  
+  if (all(depense_cols %in% colnames(data))) {
+    # Conversion en numérique
+    for (col in depense_cols) {
+      if (!is.numeric(data[[col]])) data[[col]] <- as.numeric(as.character(data[[col]]))
+    }
+    
+    # Vérification de la cohérence entre dépenses estimées et exactes
+    dep_incoherent <- !is.na(data[[depense_cols["mensuelle"]]]) & 
+      !is.na(data[[depense_cols["exacte"]]]) &
+      data[[depense_cols["exacte"]]] > (data[[depense_cols["mensuelle"]]] * 2)
     
     if (any(dep_incoherent)) {
       data$alertes[dep_incoherent] <- "Dépenses exactes supérieures aux dépenses mensuelles estimées"
-      
-      # Ajouter les détails spécifiques pour chaque ligne
       for (i in which(dep_incoherent)) {
-        data$details_incoherence[i] <- paste0(
-          "Dépense exacte (", formatC(data[[depense_col]][i], format="f", big.mark=" ", digits=0), 
-          ") est supérieure à la dépense mensuelle estimée (", 
-          formatC(data[[depense_mensuelle_col]][i] * 10000, format="f", big.mark=" ", digits=0), 
-          ") avec plus de 20% d'écart."
-        )
+        data$details_incoherence[i] <- paste0("Dépense exacte (", data[[depense_cols["exacte"]]][i], 
+                                              ") est significativement supérieure à la dépense mensuelle estimée (", 
+                                              data[[depense_cols["mensuelle"]]][i], ")")
       }
     }
   }
   
-  # Vérification de la cohérence des âges
+  # Vérification de l'âge du chef de ménage
   age_col <- "Age_du_CM"
   if (age_col %in% colnames(data)) {
-    # Convertir en numérique si nécessaire
-    if (!is.numeric(data[[age_col]])) {
-      data[[age_col]] <- as.numeric(as.character(data[[age_col]]))
-    }
+    if (!is.numeric(data[[age_col]])) data[[age_col]] <- as.numeric(as.character(data[[age_col]]))
     
     age_incoherent <- !is.na(data[[age_col]]) & (data[[age_col]] < 15 | data[[age_col]] > 120)
-    
     if (any(age_incoherent)) {
       data$alertes[age_incoherent] <- "Âge incohérent"
-      
       for (i in which(age_incoherent)) {
-        if (data[[age_col]][i] < 15) {
-          data$details_incoherence[i] <- paste0(
-            "L'âge du chef de ménage (", data[[age_col]][i], 
-            ") est inférieur à 15 ans, ce qui est improbable."
-          )
-        } else {
-          data$details_incoherence[i] <- paste0(
-            "L'âge du chef de ménage (", data[[age_col]][i], 
-            ") est supérieur à 120 ans, ce qui est improbable."
-          )
-        }
+        data$details_incoherence[i] <- paste0("L'âge du chef de ménage (", data[[age_col]][i], 
+                                              ") est ", ifelse(data[[age_col]][i] < 15, 
+                                                               "inférieur à 15 ans", 
+                                                               "supérieur à 120 ans"), 
+                                              ", ce qui est improbable.")
       }
     }
   }
   
-  # Vérification du nombre de personnes vs femmes
-  personnes_col <- "Combien_de_personnes_vent_dans_le_m_nage_"
-  femmes_col <- "Combien_de_femmes_vivent_dans_le_m_nage_"
+  # Vérification nombre de personnes vs femmes
+  pers_cols <- c(total = "Combien_de_personnes_vent_dans_le_m_nage_", 
+                 femmes = "Combien_de_femmes_vivent_dans_le_m_nage_")
   
-  if (personnes_col %in% colnames(data) && femmes_col %in% colnames(data)) {
-    # Convertir en numérique si nécessaire
-    if (!is.numeric(data[[personnes_col]])) {
-      data[[personnes_col]] <- as.numeric(as.character(data[[personnes_col]]))
-    }
-    if (!is.numeric(data[[femmes_col]])) {
-      data[[femmes_col]] <- as.numeric(as.character(data[[femmes_col]]))
+  if (all(pers_cols %in% colnames(data))) {
+    for (col in pers_cols) {
+      if (!is.numeric(data[[col]])) data[[col]] <- as.numeric(as.character(data[[col]]))
     }
     
-    pers_incoherent <- !is.na(data[[personnes_col]]) & 
-      !is.na(data[[femmes_col]]) &
-      data[[personnes_col]] < data[[femmes_col]]
+    pers_incoherent <- !is.na(data[[pers_cols["total"]]]) & 
+      !is.na(data[[pers_cols["femmes"]]]) &
+      data[[pers_cols["total"]]] < data[[pers_cols["femmes"]]]
     
     if (any(pers_incoherent)) {
       data$alertes[pers_incoherent] <- "Nombre de femmes supérieur au total de personnes"
-      
       for (i in which(pers_incoherent)) {
-        data$details_incoherence[i] <- paste0(
-          "Le nombre de femmes (", data[[femmes_col]][i], 
-          ") est supérieur au nombre total de personnes dans le ménage (", 
-          data[[personnes_col]][i], ")."
-        )
+        data$details_incoherence[i] <- paste0("Le nombre de femmes (", data[[pers_cols["femmes"]]][i], 
+                                              ") est supérieur au nombre total de personnes dans le ménage (", 
+                                              data[[pers_cols["total"]]][i], ").")
       }
     }
   }
   
-  # Vérification supplémentaire: données manquantes importantes
-  # Liste des champs obligatoires
+  # Vérification des données manquantes obligatoires
   champs_obligatoires <- c("Age_du_CM", "Combien_de_personnes_vent_dans_le_m_nage_")
-  
   for (champ in champs_obligatoires) {
     if (champ %in% colnames(data)) {
       manquant <- is.na(data[[champ]]) | data[[champ]] == ""
       if (any(manquant) && data$alertes[manquant] == "Aucune incohérence") {
         data$alertes[manquant] <- paste0("Données manquantes: ", champ)
-        data$details_incoherence[manquant] <- paste0(
-          "La valeur pour le champ '", champ, "' est manquante alors qu'elle est obligatoire."
-        )
+        data$details_incoherence[manquant] <- paste0("La valeur pour le champ '", champ, 
+                                                     "' est manquante alors qu'elle est obligatoire.")
       }
     }
   }
@@ -181,36 +135,23 @@ check_incoherence <- function(data) {
   return(data)
 }
 
-# -- Fonction pour extraire correctement les coordonnées géographiques
+# Extraction des coordonnées géographiques
 extract_coordinates <- function(data) {
   if (is.null(data) || nrow(data) == 0) return(data)
   
-  # Initialiser les colonnes de latitude et longitude si elles n'existent pas
-  if (!("latitude" %in% colnames(data)) || !("longitude" %in% colnames(data))) {
-    data$latitude <- NA
-    data$longitude <- NA
-  }
+  # Initialiser les colonnes de latitude et longitude
+  data$latitude <- NA
+  data$longitude <- NA
   
-  # Traiter selon le format des coordonnées
   if ("_geolocation" %in% colnames(data)) {
     if (is.character(data$`_geolocation`)) {
-      # Format: "lat,lon" comme chaîne de caractères
       valid_coords <- !is.na(data$`_geolocation`) & data$`_geolocation` != ""
       if (any(valid_coords)) {
         coord_split <- strsplit(as.character(data$`_geolocation`[valid_coords]), ",")
-        
-        lat_values <- sapply(coord_split, function(x) {
-          if (length(x) >= 1) as.numeric(trimws(x[1])) else NA
-        })
-        lon_values <- sapply(coord_split, function(x) {
-          if (length(x) >= 2) as.numeric(trimws(x[2])) else NA
-        })
-        
-        data$latitude[valid_coords] <- lat_values
-        data$longitude[valid_coords] <- lon_values
+        data$latitude[valid_coords] <- sapply(coord_split, function(x) if(length(x) >= 1) as.numeric(trimws(x[1])) else NA)
+        data$longitude[valid_coords] <- sapply(coord_split, function(x) if(length(x) >= 2) as.numeric(trimws(x[2])) else NA)
       }
     } else if (is.list(data$`_geolocation`)) {
-      # Format: liste de coordonnées [lat, lon]
       for (i in 1:nrow(data)) {
         geo <- data$`_geolocation`[[i]]
         if (!is.null(geo) && length(geo) >= 2 && !is.na(geo[1]) && !is.na(geo[2])) {
@@ -224,7 +165,7 @@ extract_coordinates <- function(data) {
   return(data)
 }
 
-# -- Interface utilisateur
+# Interface utilisateur simplifiée
 ui <- dashboardPage(
   dashboardHeader(title = "Suivi d'Enquête KoboToolbox"),
   dashboardSidebar(
@@ -237,8 +178,9 @@ ui <- dashboardPage(
     actionButton("refresh_button", "Rafraîchir les données", icon = icon("refresh"))
   ),
   dashboardBody(
-    useShinyalert(),
+    useShinyalert(force=TRUE),
     tabItems(
+      # Onglet Tableau de bord
       tabItem(tabName = "dashboard",
               fluidRow(
                 valueBoxOutput("total_submissions"),
@@ -246,62 +188,54 @@ ui <- dashboardPage(
                 valueBoxOutput("invalid_submissions")
               ),
               fluidRow(
-                box(title = "Tableau des questionnaires soumis", status = "primary", width = 12,
-                    DTOutput("data_table"),
-                    downloadButton("download_xls", "Télécharger en XLS", 
-                                   style = "color: white; background-color: #3c8dbc; margin-top: 10px;")
+                box(title = "Téléchargement des données", status = "primary", width = 12,
+                    downloadButton("download_xls", "Télécharger les données complètes en XLS", 
+                                   style = "color: white; background-color: #3c8dbc; width: 100%; padding: 10px;")
                 )
               )
       ),
+      
+      # Onglet Carte
       tabItem(tabName = "map",
-              fluidRow(
-                box(title = "Carte des questionnaires", status = "primary", width = 12,
-                    leafletOutput("map", height = 600))
-              )
+              box(title = "Carte des questionnaires", status = "primary", width = 12,
+                  leafletOutput("map", height = 600))
       ),
+      
+      # Onglet Détails des incohérences
       tabItem(tabName = "incoherences",
+              box(title = "Analyse des incohérences", status = "warning", width = 12,
+                  p("Ce tableau présente uniquement les questionnaires comportant des incohérences, avec des détails sur les problèmes détectés."),
+                  DTOutput("incoherences_table")),
               fluidRow(
-                box(title = "Analyse des incohérences", status = "warning", width = 12,
-                    p("Ce tableau présente uniquement les questionnaires comportant des incohérences, avec des détails sur les problèmes détectés."),
-                    DTOutput("incoherences_table"))
-              ),
-              fluidRow(
-                box(title = "Résumé des incohérences", status = "danger", width = 12,
-                    plotOutput("incoherences_summary"))
-              ),
-              fluidRow(
-                box(title = "Détail d'un questionnaire", status = "info", width = 12,
-                    uiOutput("questionnaire_details"))
+                box(title = "Répartition des types d'incohérences", status = "danger", width = 6,
+                    plotOutput("incoherences_summary", height = 350)),
+                box(title = "Proportion des questionnaires valides/non valides", status = "info", width = 6,
+                    plotOutput("validity_piechart", height = 350))
               )
       ),
+      
+      # Onglet Données brutes
       tabItem(tabName = "rawdata",
-              fluidRow(
-                box(title = "Données brutes", status = "warning", width = 12,
-                    DTOutput("raw_data_table"))
-              )
+              box(title = "Données brutes", status = "warning", width = 12,
+                  DTOutput("raw_data_table"))
       )
     )
   )
 )
 
-# -- Serveur
+# Serveur
 server <- function(input, output, session) {
   data <- reactiveVal(NULL)
-  selected_questionnaire <- reactiveVal(NULL)
   
+  # Fonction de rafraîchissement des données
   refresh_data <- function() {
     new_data <- fetch_data()
     if (!is.null(new_data)) {
-      # Extraire les coordonnées géographiques
-      new_data <- extract_coordinates(new_data)
-      
-      # Vérification des incohérences
-      new_data <- check_incoherence(new_data)
+      new_data <- extract_coordinates(new_data) %>% check_incoherence()
       data(new_data)
       
-      # Déclencher des alertes instantanées pour les soumissions invalides
+      # Alertes pour les soumissions invalides
       invalid_data <- new_data %>% filter(alertes != "Aucune incohérence")
-      
       if (nrow(invalid_data) > 0) {
         shinyalert(
           title = "Alertes d'incohérences détectées!",
@@ -318,23 +252,12 @@ server <- function(input, output, session) {
     }
   }
   
-  # Rafraîchissement initial des données
-  observe({
-    refresh_data()
-  }, priority = 1000)
+  # Rafraîchissement initial et périodique
+  observe({ refresh_data() }, priority = 1000)
+  observeEvent(reactiveTimer(60000)(), { refresh_data() })
+  observeEvent(input$refresh_button, { refresh_data() })
   
-  # Rafraîchissement des données toutes les 60 secondes
-  autoInvalidate <- reactiveTimer(60000)
-  observe({
-    autoInvalidate()
-    refresh_data()
-  })
-  
-  # Rafraîchissement manuel des données
-  observeEvent(input$refresh_button, {
-    refresh_data()
-  })
-  
+  # Value boxes
   output$total_submissions <- renderValueBox({
     req(data())
     valueBox(nrow(data()), "Total des questionnaires", icon = icon("file"), color = "blue")
@@ -342,73 +265,20 @@ server <- function(input, output, session) {
   
   output$valid_submissions <- renderValueBox({
     req(data())
-    valid_count <- sum(data()$alertes == "Aucune incohérence", na.rm = TRUE)
-    valueBox(valid_count, "Questionnaires valides", icon = icon("check"), color = "green")
+    valueBox(sum(data()$alertes == "Aucune incohérence", na.rm = TRUE), 
+             "Questionnaires valides", icon = icon("check"), color = "green")
   })
   
   output$invalid_submissions <- renderValueBox({
     req(data())
-    invalid_count <- sum(data()$alertes != "Aucune incohérence", na.rm = TRUE)
-    valueBox(invalid_count, "Questionnaires invalides", icon = icon("exclamation-triangle"), color = "red")
+    valueBox(sum(data()$alertes != "Aucune incohérence", na.rm = TRUE), 
+             "Questionnaires invalides", icon = icon("exclamation-triangle"), color = "red")
   })
   
-  output$data_table <- renderDT({
-    req(data())
-    
-    # Sélectionner et renommer les colonnes pertinentes
-    selected_data <- data() %>%
-      select(
-        ID = `_uuid`,
-        Region = `Region`, 
-        Localite = `localit`,
-        Age_CM = `Age_du_CM`,
-        Nb_Personnes = `Combien_de_personnes_vent_dans_le_m_nage_`,
-        Nb_Femmes = `Combien_de_femmes_vivent_dans_le_m_nage_`,
-        Depense_Mensuelle = `Quel_est_la_d_pense_mensuelle_du_m_nage_`,
-        Depense_Exacte = `Quelle_est_la_d_pens_e_du_m_nage_exact`,
-        Date_Soumission = `_submission_time`,
-        Alertes = `alertes`
-      )
-    
-    datatable(selected_data, 
-              options = list(
-                scrollX = TRUE,
-                pageLength = 10,
-                rowCallback = JS(
-                  "function(row, data) {
-                    if (data[9] !== 'Aucune incohérence') {
-                      $('td', row).css('background-color', '#ffdddd');
-                    }
-                  }"
-                )
-              )
-    ) %>% formatStyle(
-      'Alertes',
-      backgroundColor = styleEqual(c("Aucune incohérence", "Coordonnées GPS manquantes", 
-                                     "Dépenses exactes supérieures aux dépenses mensuelles estimées",
-                                     "Âge incohérent", "Nombre de femmes supérieur au total de personnes",
-                                     "Données manquantes: Age_du_CM", "Données manquantes: Combien_de_personnes_vent_dans_le_m_nage_"),
-                                   c('transparent', '#ff9999', '#ffcc99', '#99ccff', '#ffff99', '#ddddff', '#ddddff'))
-    )
-  })
-  
-  # Fonction de téléchargement en XLS
-  output$download_xls <- downloadHandler(
-    filename = function() {
-      paste("donnees_kobo_", Sys.Date(), ".xlsx", sep = "")
-    },
-    content = function(file) {
-      req(data())
-      writexl::write_xlsx(data(), path = file)
-    }
-  )
-  
+  # Carte
   output$map <- renderLeaflet({
     req(data())
-    
-    # Filtrer les données avec des coordonnées valides
-    map_data <- data() %>% 
-      filter(!is.na(latitude) & !is.na(longitude))
+    map_data <- data() %>% filter(!is.na(latitude) & !is.na(longitude))
     
     if (nrow(map_data) == 0) {
       return(leaflet() %>% 
@@ -417,7 +287,6 @@ server <- function(input, output, session) {
                addPopups(lng = -17.44, lat = 14.70, popup = "Aucune coordonnée GPS valide disponible"))
     }
     
-    # Créer des popups informatifs
     popups <- paste0(
       "<strong>ID:</strong> ", map_data$`_uuid`, "<br>",
       "<strong>Région:</strong> ", map_data$Region, "<br>",
@@ -426,16 +295,12 @@ server <- function(input, output, session) {
       "<strong>Alerte:</strong> ", map_data$alertes
     )
     
-    # Créer la carte
     leaflet(map_data) %>%
       addTiles() %>%
       addCircleMarkers(
         ~longitude, ~latitude,
         color = ~ifelse(alertes == "Aucune incohérence", "green", "red"),
-        radius = 8,
-        fillOpacity = 0.8,
-        stroke = FALSE,
-        popup = popups,
+        radius = 8, fillOpacity = 0.8, stroke = FALSE, popup = popups,
         clusterOptions = markerClusterOptions()
       ) %>%
       addLegend(
@@ -446,11 +311,9 @@ server <- function(input, output, session) {
       )
   })
   
-  # Tableau des incohérences seulement
+  # Tableau des incohérences
   output$incoherences_table <- renderDT({
     req(data())
-    
-    # Filtrer les données pour n'afficher que les incohérences
     incoherences_data <- data() %>%
       filter(alertes != "Aucune incohérence") %>%
       select(
@@ -467,178 +330,84 @@ server <- function(input, output, session) {
                        options = list(dom = 't')))
     }
     
-    # Ajouter un bouton pour afficher les détails complets
     datatable(incoherences_data, 
-              options = list(
-                scrollX = TRUE,
-                pageLength = 10
-              ),
+              options = list(scrollX = TRUE, pageLength = 10),
               selection = 'single',
-              rownames = FALSE,
-              caption = "Cliquez sur une ligne pour voir les détails complets du questionnaire"
+              rownames = FALSE
     ) %>% formatStyle(
       'Type_Alerte',
-      backgroundColor = styleEqual(c("Coordonnées GPS manquantes", 
-                                     "Dépenses exactes supérieures aux dépenses mensuelles estimées",
-                                     "Âge incohérent", "Nombre de femmes supérieur au total de personnes",
-                                     "Données manquantes: Age_du_CM", "Données manquantes: Combien_de_personnes_vent_dans_le_m_nage_"),
-                                   c('#ff9999', '#ffcc99', '#99ccff', '#ffff99', '#ddddff', '#ddddff'))
-    )
-  })
-  
-  # Résumé graphique des incohérences
-  output$incoherences_summary <- renderPlot({
-    req(data())
-    
-    incoherences_count <- table(data()$alertes)
-    
-    # Exclure "Aucune incohérence" pour le graphique
-    incoherences_count <- incoherences_count[names(incoherences_count) != "Aucune incohérence"]
-    
-    if(length(incoherences_count) == 0) {
-      plot(0, 0, type = "n", axes = FALSE, xlab = "", ylab = "", 
-           main = "Aucune incohérence détectée dans les données.")
-      return()
-    }
-    
-    # Créer un graphique à barres
-    barplot(incoherences_count, 
-            main = "Types d'incohérences détectées",
-            ylab = "Nombre de questionnaires",
-            col = rainbow(length(incoherences_count)),
-            las = 2,
-            cex.names = 0.8,
-            horiz = TRUE)
-  })
-  
-  # Observer la sélection dans le tableau des incohérences
-  observeEvent(input$incoherences_table_rows_selected, {
-    req(data())
-    
-    incoherences_data <- data() %>%
-      filter(alertes != "Aucune incohérence")
-    
-    if(length(input$incoherences_table_rows_selected) > 0 && nrow(incoherences_data) > 0) {
-      selected_row <- input$incoherences_table_rows_selected
-      
-      if(selected_row <= nrow(incoherences_data)) {
-        selected_id <- incoherences_data$`_uuid`[selected_row]
-        selected_questionnaire(data() %>% filter(`_uuid` == selected_id))
-      }
-    }
-  })
-  
-  # Afficher les détails du questionnaire sélectionné
-  output$questionnaire_details <- renderUI({
-    req(selected_questionnaire())
-    
-    questionnaire <- selected_questionnaire()
-    
-    if(nrow(questionnaire) == 0) {
-      return(p("Sélectionnez un questionnaire dans le tableau ci-dessus pour voir les détails."))
-    }
-    
-    # Formater les détails du questionnaire
-    fluidRow(
-      column(12,
-             box(
-               title = paste("Détails du questionnaire:", questionnaire$`_uuid`[1]),
-               status = "primary",
-               width = 12,
-               collapsible = TRUE,
-               div(
-                 tags$h4(
-                   tags$span(style = "color: red;", "Type d'incohérence: "), 
-                   questionnaire$alertes[1]
-                 ),
-                 tags$p(
-                   tags$span(style = "font-weight: bold;", "Explication: "), 
-                   questionnaire$details_incoherence[1]
-                 ),
-                 hr(),
-                 tags$h4("Informations générales"),
-                 tags$ul(
-                   tags$li(tags$b("Région: "), if(!is.null(questionnaire$Region[1])) questionnaire$Region[1] else "Non spécifié"),
-                   tags$li(tags$b("Localité: "), if(!is.null(questionnaire$localit[1])) questionnaire$localit[1] else "Non spécifié"),
-                   tags$li(tags$b("Date de soumission: "), if(!is.null(questionnaire$`_submission_time`[1])) questionnaire$`_submission_time`[1] else "Non spécifié"),
-                   tags$li(tags$b("Coordonnées GPS: "), 
-                           if(!is.na(questionnaire$latitude[1]) && !is.na(questionnaire$longitude[1])) {
-                             paste(questionnaire$latitude[1], questionnaire$longitude[1], sep=", ")
-                           } else {
-                             "Non disponibles"
-                           })
-                 ),
-                 tags$h4("Données du ménage"),
-                 tags$ul(
-                   tags$li(tags$b("Âge du chef de ménage: "), 
-                           if(!is.null(questionnaire$`Age_du_CM`[1]) && !is.na(questionnaire$`Age_du_CM`[1])) {
-                             questionnaire$`Age_du_CM`[1]
-                           } else {
-                             "Non spécifié"
-                           }),
-                   tags$li(tags$b("Nombre de personnes dans le ménage: "), 
-                           if(!is.null(questionnaire$`Combien_de_personnes_vent_dans_le_m_nage_`[1]) && !is.na(questionnaire$`Combien_de_personnes_vent_dans_le_m_nage_`[1])) {
-                             questionnaire$`Combien_de_personnes_vent_dans_le_m_nage_`[1]
-                           } else {
-                             "Non spécifié"
-                           }),
-                   tags$li(tags$b("Nombre de femmes dans le ménage: "), 
-                           if(!is.null(questionnaire$`Combien_de_femmes_vivent_dans_le_m_nage_`[1]) && !is.na(questionnaire$`Combien_de_femmes_vivent_dans_le_m_nage_`[1])) {
-                             questionnaire$`Combien_de_femmes_vivent_dans_le_m_nage_`[1]
-                           } else {
-                             "Non spécifié"
-                           }),
-                   tags$li(tags$b("Dépense mensuelle du ménage: "), 
-                           if(!is.null(questionnaire$`Quel_est_la_d_pense_mensuelle_du_m_nage_`[1]) && !is.na(questionnaire$`Quel_est_la_d_pense_mensuelle_du_m_nage_`[1])) {
-                             formatC(questionnaire$`Quel_est_la_d_pense_mensuelle_du_m_nage_`[1] * 10000, format="f", big.mark=" ", digits=0)
-                           } else {
-                             "Non spécifié"
-                           }),
-                   tags$li(tags$b("Dépense exacte du ménage: "), 
-                           if(!is.null(questionnaire$`Quelle_est_la_d_pens_e_du_m_nage_exact`[1]) && !is.na(questionnaire$`Quelle_est_la_d_pens_e_du_m_nage_exact`[1])) {
-                             formatC(questionnaire$`Quelle_est_la_d_pens_e_du_m_nage_exact`[1], format="f", big.mark=" ", digits=0)
-                           } else {
-                             "Non spécifié"
-                           })
-                 ),
-                 tags$h4("Recommandations pour correction"),
-                 tags$div(
-                   style = "background-color: #f0f7fb; border-left: 5px solid #3498db; padding: 10px;",
-                   tags$p(
-                     get_recommendation(questionnaire$alertes[1], questionnaire)
-                   )
-                 )
-               )
-             )
+      backgroundColor = styleEqual(
+        c("Coordonnées GPS manquantes", 
+          "Dépenses exactes supérieures aux dépenses mensuelles estimées",
+          "Âge incohérent", "Nombre de femmes supérieur au total de personnes",
+          "Données manquantes: Age_du_CM", "Données manquantes: Combien_de_personnes_vent_dans_le_m_nage_"),
+        c('#ff9999', '#ffcc99', '#99ccff', '#ffff99', '#ddddff', '#ddddff')
       )
     )
   })
   
-  # Fonction pour générer des recommandations spécifiques
-  get_recommendation <- function(alerte_type, data) {
-    if(alerte_type == "Coordonnées GPS manquantes") {
-      return("L'enquêteur doit activer la géolocalisation sur son appareil et s'assurer que les permissions sont accordées à l'application de collecte. Une nouvelle visite peut être nécessaire pour collecter les coordonnées GPS.")
-    } else if(alerte_type == "Dépenses exactes supérieures aux dépenses mensuelles estimées") {
-      return(paste0("Vérifier les dépenses exactes (", formatC(data$`Quelle_est_la_d_pens_e_du_m_nage_exact`[1], format="f", big.mark=" ", digits=0), 
-                    ") par rapport à l'estimation mensuelle (", formatC(data$`Quel_est_la_d_pense_mensuelle_du_m_nage_`[1] * 10000, format="f", big.mark=" ", digits=0), 
-                    "). Une des deux valeurs pourrait comporter une erreur de saisie ou de compréhension. Contacter l'enquêteur pour clarification."))
-    } else if(alerte_type == "Âge incohérent") {
-      return(paste0("L'âge du chef de ménage (", data$`Age_du_CM`[1], ") semble incorrect. Vérifier si c'est une erreur de saisie ou s'il y a eu confusion dans l'identification du chef de ménage."))
-    } else if(alerte_type == "Nombre de femmes supérieur au total de personnes") {
-      return(paste0("Le nombre de femmes (", data$`Combien_de_femmes_vivent_dans_le_m_nage_`[1], 
-                    ") ne peut pas être supérieur au nombre total de personnes dans le ménage (", 
-                    data$`Combien_de_personnes_vent_dans_le_m_nage_`[1], 
-                    "). Vérifier les deux valeurs et corriger en conséquence."))
-    } else {
-      return("Vérifier les données et contacter l'enquêteur pour clarification.")
-    }
-  }
+  # Téléchargement XLS
+  output$download_xls <- downloadHandler(
+    filename = function() paste("donnees_kobo_", Sys.Date(), ".xlsx", sep = ""),
+    content = function(file) writexl::write_xlsx(data(), path = file)
+  )
   
+  # Graphique des types d'incohérences
+  output$incoherences_summary <- renderPlot({
+    req(data())
+    incoherences_data <- data() %>% filter(alertes != "Aucune incohérence")
+    
+    if(nrow(incoherences_data) == 0) {
+      plot(0, 0, type = "n", axes = FALSE, xlab = "", ylab = "", main = "Aucune incohérence détectée")
+      return()
+    }
+    
+    summary_data <- incoherences_data %>%
+      count(alertes) %>%
+      arrange(desc(n)) %>%
+      mutate(alertes = factor(alertes, levels = alertes))
+    
+    ggplot(summary_data, aes(x = reorder(alertes, n), y = n, fill = alertes)) +
+      geom_bar(stat = "identity") +
+      geom_text(aes(label = n), hjust = -0.3, size = 4) +
+      coord_flip() +
+      labs(x = NULL, y = "Nombre d'occurrences") +
+      ggtitle(" Incohérences détectées") +
+      theme_minimal() +
+      theme(legend.position = "none",
+            plot.title = element_text(hjust = 0, size = 14, face = "bold", margin = margin(b = 20)),
+            axis.text.y = element_text(size = 10),
+            axis.text.x = element_text(size = 9),
+            panel.grid.major.y = element_blank())
+  })
+  
+  # Graphique en camembert 
+  output$validity_piechart <- renderPlot({
+    req(data())
+    validity_data <- data() %>%
+      mutate(Statut = ifelse(alertes == "Aucune incohérence", "Valide", "Non valide")) %>%
+      count(Statut) %>%
+      mutate(Percentage = n/sum(n)*100,
+             Label = paste0(Statut, "\n", n, " (", round(Percentage, 1), "%)"))
+    
+    ggplot(validity_data, aes(x = "", y = n, fill = Statut)) +
+      geom_bar(width = 1, stat = "identity") +
+      coord_polar("y", start = 0) +
+      scale_fill_manual(values = c("Valide" = "#4CAF50", "Non valide" = "#F44336")) +
+      geom_text(aes(label = Label), position = position_stack(vjust = 0.5),
+                color = "white", size = 5) +
+      labs(title = "Proportion des questionnaires\nvalides et non valides") +
+      theme_void() +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+            legend.position = "none")
+  })
+  
+  # Tableau de données brutes
   output$raw_data_table <- renderDT({
     req(data())
     datatable(data(), options = list(scrollX = TRUE))
   })
 }
 
-# -- Lancer l'application Shiny
+# Lancer l'application Shiny
 shinyApp(ui = ui, server = server)
