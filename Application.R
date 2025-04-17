@@ -1,6 +1,7 @@
 # Chargement des bibliothèques nécessaires
 library(shiny)
 library(httr)
+library(jsonlite)
 library(leaflet)
 library(DT)
 library(shinydashboard)
@@ -11,8 +12,10 @@ library(ggplot2)
 library(tidyr)
 
 # Configuration API KoboToolbox
-token <- Sys.getenv("token")
-form_id <- Sys.getenv("form_id")
+token <- "6f8bb50a807ae9e7fda9fba40566da0f9c3383c5"
+form_id <- "a9okT245N3K6EBHaW5kEWu"
+#token <- Sys.getenv("token")
+#form_id <- Sys.getenv("form_id")
 
 url <- paste0("https://kf.kobotoolbox.org/api/v2/assets/", form_id, "/data/?format=json")
 
@@ -166,7 +169,7 @@ extract_coordinates <- function(data) {
 
 # Interface utilisateur simplifiée
 ui <- dashboardPage(
-  dashboardHeader(title = "Suivi d'Enquête KoboToolbox"),
+  dashboardHeader(title = "Suivi d'enquête KoboToolbox"),
   dashboardSidebar(
     sidebarMenu(
       menuItem("Tableau de bord", tabName = "dashboard", icon = icon("dashboard")),

@@ -1,0 +1,15 @@
+Quelques propositions d'amélioration :
+
+Au niveau du questionnaire :
+
+    Ajouter un champ pour renseigner le nom ou l'identifiant de l’enquêteur dans le formulaire.
+
+Au niveau de la carte :
+
+    Lorsqu'on survole une zone où une enquête a été réalisée, afficher un résumé des informations concernant les enquêtes effectuées dans cette zone (nombre, dates, résultats clés, etc.).
+
+Fonctionnalités supplémentaires :
+
+    Ajouter un onglet dédié à l’affichage des détails des incohérences détectées dans les données.
+
+    Afficher davantage de statistiques sur les enquêtes (répartition par zone, par enquêteur, taux d’incohérence, etc.).
