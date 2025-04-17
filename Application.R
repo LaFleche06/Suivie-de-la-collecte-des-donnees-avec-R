@@ -10,13 +10,13 @@ library(dplyr)
 library(writexl)
 library(ggplot2)
 library(tidyr)
+library(plotly)
+library(shinyWidgets)
+library(lubridate)
 
 # Configuration API KoboToolbox
-token <- "6f8bb50a807ae9e7fda9fba40566da0f9c3383c5"
-form_id <- "a9okT245N3K6EBHaW5kEWu"
-#token <- Sys.getenv("token")
-#form_id <- Sys.getenv("form_id")
-
+token <- Sys.getenv("token")
+form_id <- Sys.getenv("form_id")
 url <- paste0("https://kf.kobotoolbox.org/api/v2/assets/", form_id, "/data/?format=json")
 
 # Fonction pour récupérer les données depuis l'API KoboToolbox
@@ -39,97 +39,123 @@ check_incoherence <- function(data) {
   # Initialisation des colonnes d'alerte
   data$alertes <- "Aucune incohérence"
   data$details_incoherence <- NA
+  data$nb_incoherences <- 0
   
-  # Vérification des coordonnées GPS
-  if ("_geolocation" %in% colnames(data)) {
-    gps_missing <- if(is.character(data$`_geolocation`)) {
-      is.na(data$`_geolocation`) | data$`_geolocation` == ""
-    } else {
-      sapply(data$`_geolocation`, function(x) is.null(x) || length(x) == 0 || 
-               (length(x) > 0 && (is.na(x[1]) || is.na(x[2]))))
-    }
-    
-    if (any(gps_missing)) {
-      data$alertes[gps_missing] <- "Coordonnées GPS manquantes"
-      data$details_incoherence[gps_missing] <- "Les coordonnées GPS n'ont pas été enregistrées lors de la collecte."
-    }
-  }
-  
-  # Vérification des dépenses mensuelles vs exactes
-  depense_cols <- c(mensuelle = "Quel_est_la_d_pense_mensuelle_du_m_nage_", 
-                    exacte = "Quelle_est_la_d_pens_e_du_m_nage_exact_")
-  
-  if (all(depense_cols %in% colnames(data))) {
-    # Conversion en numérique
-    for (col in depense_cols) {
-      if (!is.numeric(data[[col]])) data[[col]] <- as.numeric(as.character(data[[col]]))
-    }
-    
-    # Vérification de la cohérence entre dépenses estimées et exactes
-    dep_incoherent <- !is.na(data[[depense_cols["mensuelle"]]]) & 
-      !is.na(data[[depense_cols["exacte"]]]) &
-      data[[depense_cols["exacte"]]] > (data[[depense_cols["mensuelle"]]] * 2)
-    
-    if (any(dep_incoherent)) {
-      data$alertes[dep_incoherent] <- "Dépenses exactes supérieures aux dépenses mensuelles estimées"
-      for (i in which(dep_incoherent)) {
-        data$details_incoherence[i] <- paste0("Dépense exacte (", data[[depense_cols["exacte"]]][i], 
-                                              ") est significativement supérieure à la dépense mensuelle estimée (", 
-                                              data[[depense_cols["mensuelle"]]][i], ")")
+  # Liste des vérifications à effectuer
+  checks <- list(
+    list(
+      condition = function(d) {
+        if (!"_geolocation" %in% colnames(d)) return(rep(FALSE, nrow(d)))
+        if (is.character(d$`_geolocation`)) {
+          return(is.na(d$`_geolocation`) | d$`_geolocation` == "")
+        } else {
+          return(sapply(d$`_geolocation`, function(x) is.null(x) || length(x) == 0 || 
+                          (length(x) > 0 && (is.na(x[1]) || is.na(x[2])))))
+        }
+      },
+      alert = "Coordonnées GPS manquantes",
+      details = "Les coordonnées GPS n'ont pas été enregistrées lors de la collecte."
+    ),
+    list(
+      condition = function(d) {
+        cols <- c("Quel_est_la_d_pense_mensuelle_du_m_nage_", "Quelle_est_la_d_pens_e_du_m_nage_exact_")
+        if (!all(cols %in% colnames(d))) return(rep(FALSE, nrow(d)))
+        
+        for (col in cols) {
+          if (!is.numeric(d[[col]])) d[[col]] <- as.numeric(as.character(d[[col]]))
+        }
+        
+        return(!is.na(d[[cols[1]]]) & !is.na(d[[cols[2]]]) & d[[cols[2]]] > (d[[cols[1]]] * 2))
+      },
+      alert = "Dépenses exactes supérieures aux dépenses mensuelles estimées",
+      details = function(d) {
+        cols <- c("Quel_est_la_d_pense_mensuelle_du_m_nage_", "Quelle_est_la_d_pens_e_du_m_nage_exact_")
+        paste0("Dépense exacte (", d[[cols[2]]], 
+               ") est significativement supérieure à la dépense mensuelle estimée (", 
+               d[[cols[1]]], ")")
       }
-    }
-  }
-  
-  # Vérification de l'âge du chef de ménage
-  age_col <- "Age_du_CM"
-  if (age_col %in% colnames(data)) {
-    if (!is.numeric(data[[age_col]])) data[[age_col]] <- as.numeric(as.character(data[[age_col]]))
-    
-    age_incoherent <- !is.na(data[[age_col]]) & (data[[age_col]] < 15 | data[[age_col]] > 120)
-    if (any(age_incoherent)) {
-      data$alertes[age_incoherent] <- "Âge incohérent"
-      for (i in which(age_incoherent)) {
-        data$details_incoherence[i] <- paste0("L'âge du chef de ménage (", data[[age_col]][i], 
-                                              ") est ", ifelse(data[[age_col]][i] < 15, 
-                                                               "inférieur à 15 ans", 
-                                                               "supérieur à 120 ans"), 
-                                              ", ce qui est improbable.")
+    ),
+    list(
+      condition = function(d) {
+        col <- "Age_du_CM"
+        if (!col %in% colnames(d)) return(rep(FALSE, nrow(d)))
+        
+        if (!is.numeric(d[[col]])) d[[col]] <- as.numeric(as.character(d[[col]]))
+        return(!is.na(d[[col]]) & (d[[col]] < 15 | d[[col]] > 120))
+      },
+      alert = "Âge incohérent",
+      details = function(d) {
+        paste0("L'âge du chef de ménage (", d$Age_du_CM, 
+               ") est ", ifelse(d$Age_du_CM < 15, 
+                                "inférieur à 15 ans", 
+                                "supérieur à 120 ans"), 
+               ", ce qui est improbable.")
       }
-    }
-  }
-  
-  # Vérification nombre de personnes vs femmes
-  pers_cols <- c(total = "Combien_de_personnes_vent_dans_le_m_nage_", 
-                 femmes = "Combien_de_femmes_vivent_dans_le_m_nage_")
-  
-  if (all(pers_cols %in% colnames(data))) {
-    for (col in pers_cols) {
-      if (!is.numeric(data[[col]])) data[[col]] <- as.numeric(as.character(data[[col]]))
-    }
-    
-    pers_incoherent <- !is.na(data[[pers_cols["total"]]]) & 
-      !is.na(data[[pers_cols["femmes"]]]) &
-      data[[pers_cols["total"]]] < data[[pers_cols["femmes"]]]
-    
-    if (any(pers_incoherent)) {
-      data$alertes[pers_incoherent] <- "Nombre de femmes supérieur au total de personnes"
-      for (i in which(pers_incoherent)) {
-        data$details_incoherence[i] <- paste0("Le nombre de femmes (", data[[pers_cols["femmes"]]][i], 
-                                              ") est supérieur au nombre total de personnes dans le ménage (", 
-                                              data[[pers_cols["total"]]][i], ").")
+    ),
+    list(
+      condition = function(d) {
+        cols <- c("Combien_de_personnes_vent_dans_le_m_nage_", "Combien_de_femmes_vivent_dans_le_m_nage_")
+        if (!all(cols %in% colnames(d))) return(rep(FALSE, nrow(d)))
+        
+        for (col in cols) {
+          if (!is.numeric(d[[col]])) d[[col]] <- as.numeric(as.character(d[[col]]))
+        }
+        
+        return(!is.na(d[[cols[1]]]) & !is.na(d[[cols[2]]]) & d[[cols[1]]] < d[[cols[2]]])
+      },
+      alert = "Nombre de femmes supérieur au total de personnes",
+      details = function(d) {
+        cols <- c("Combien_de_personnes_vent_dans_le_m_nage_", "Combien_de_femmes_vivent_dans_le_m_nage_")
+        paste0("Le nombre de femmes (", d[[cols[2]]], 
+               ") est supérieur au nombre total de personnes dans le ménage (", 
+               d[[cols[1]]], ").")
       }
-    }
-  }
+    )
+  )
   
   # Vérification des données manquantes obligatoires
   champs_obligatoires <- c("Age_du_CM", "Combien_de_personnes_vent_dans_le_m_nage_")
   for (champ in champs_obligatoires) {
     if (champ %in% colnames(data)) {
-      manquant <- is.na(data[[champ]]) | data[[champ]] == ""
-      if (any(manquant) && data$alertes[manquant] == "Aucune incohérence") {
-        data$alertes[manquant] <- paste0("Données manquantes: ", champ)
-        data$details_incoherence[manquant] <- paste0("La valeur pour le champ '", champ, 
-                                                     "' est manquante alors qu'elle est obligatoire.")
+      check <- list(
+        condition = function(d) is.na(d[[champ]]) | d[[champ]] == "",
+        alert = paste0("Données manquantes: ", champ),
+        details = paste0("La valeur pour le champ '", champ, "' est manquante alors qu'elle est obligatoire.")
+      )
+      checks <- c(checks, list(check))
+    }
+  }
+  
+  # Application des vérifications
+  for (check in checks) {
+    condition_result <- check$condition(data)
+    
+    if (any(condition_result)) {
+      # Mettre à jour le compteur d'incohérences
+      data$nb_incoherences[condition_result] <- data$nb_incoherences[condition_result] + 1
+      
+      # Mettre à jour les alertes pour les nouvelles incohérences
+      is_first_alert <- data$alertes[condition_result] == "Aucune incohérence"
+      data$alertes[condition_result & is_first_alert] <- check$alert
+      
+      # Pour les rangées ayant déjà des alertes, ajouter à la liste
+      data$alertes[condition_result & !is_first_alert] <- paste0(data$alertes[condition_result & !is_first_alert], 
+                                                                 ", ", check$alert)
+      
+      # Mise à jour des détails
+      if (is.function(check$details)) {
+        details <- check$details(data[condition_result, , drop = FALSE])
+        data$details_incoherence[condition_result] <- ifelse(
+          is.na(data$details_incoherence[condition_result]),
+          details,
+          paste0(data$details_incoherence[condition_result], "; ", details)
+        )
+      } else {
+        data$details_incoherence[condition_result] <- ifelse(
+          is.na(data$details_incoherence[condition_result]),
+          check$details,
+          paste0(data$details_incoherence[condition_result], "; ", check$details)
+        )
       }
     }
   }
@@ -164,62 +190,161 @@ extract_coordinates <- function(data) {
     }
   }
   
+  # Conversion de la date de soumission au format Date
+  if ("_submission_time" %in% colnames(data)) {
+    data$submission_date <- as.Date(data$`_submission_time`)
+  }
+  
   return(data)
 }
 
-# Interface utilisateur simplifiée
+# Interface utilisateur améliorée
 ui <- dashboardPage(
+  skin = "blue",
   dashboardHeader(title = "Suivi d'enquête KoboToolbox"),
   dashboardSidebar(
     sidebarMenu(
       menuItem("Tableau de bord", tabName = "dashboard", icon = icon("dashboard")),
       menuItem("Carte", tabName = "map", icon = icon("map")),
-      menuItem("Détails des incohérences", tabName = "incoherences", icon = icon("exclamation-triangle")),
-      menuItem("Données brutes", tabName = "rawdata", icon = icon("table"))
+      menuItem("Incohérences", tabName = "incoherences", icon = icon("exclamation-triangle")),
+      menuItem("Données brutes", tabName = "rawdata", icon = icon("table")),
+      menuItem("Visualisations", tabName = "visualizations", icon = icon("chart-bar"))
     ),
-    actionButton("refresh_button", "Rafraîchir les données", icon = icon("refresh"))
+    div(
+      style = "padding: 15px;",
+      actionButton("refresh_button", "Rafraîchir les données", icon = icon("refresh"), 
+                   style = "width: 100%; background-color: #3c8dbc; color: white;")
+    )
   ),
   dashboardBody(
     useShinyalert(force=TRUE),
+    # CSS personnalisé pour améliorer l'apparence
+    tags$head(
+      tags$style(HTML('
+        .skin-blue .main-header .logo {
+          font-weight: bold;
+        }
+        .box-title {
+          font-size: 18px;
+        }
+        .small-box {
+          border-radius: 5px;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .small-box h3 {
+          font-size: 28px;
+        }
+      '))
+    ),
     tabItems(
-      # Onglet Tableau de bord
+      # Onglet Tableau de bord amélioré
       tabItem(tabName = "dashboard",
               fluidRow(
-                valueBoxOutput("total_submissions"),
-                valueBoxOutput("valid_submissions"),
-                valueBoxOutput("invalid_submissions")
+                valueBoxOutput("total_submissions", width = 3),
+                valueBoxOutput("valid_submissions", width = 3),
+                valueBoxOutput("invalid_submissions", width = 3),
+                valueBoxOutput("completion_rate", width = 3)
               ),
               fluidRow(
-                box(title = "Téléchargement des données", status = "primary", width = 12,
-                    downloadButton("download_xls", "Télécharger les données complètes en XLS", 
-                                   style = "color: white; background-color: #3c8dbc; width: 100%; padding: 10px;")
+                box(title = "Activité récente", status = "primary", width = 8,
+                    plotlyOutput("activity_chart", height = 250)),
+                box(title = "Téléchargement", status = "info", width = 4,
+                    downloadButton("download_xls", "Télécharger en XLS", 
+                                   style = "width: 100%; margin-bottom: 10px;"),
+                    downloadButton("download_csv", "Télécharger en CSV", 
+                                   style = "width: 100%; margin-bottom: 10px;"),
+                    downloadButton("download_incoherences", "Télécharger incohérences",
+                                   style = "width: 100%;")
+                )
+              ),
+              fluidRow(
+                box(title = "Régions avec le plus d'incohérences", status = "warning", width = 6,
+                    plotlyOutput("regions_issues"))
+              )
+      ),
+      
+      # Onglet Carte amélioré
+      tabItem(tabName = "map",
+              fluidRow(
+                column(3,
+                       box(title = "Filtres", status = "primary", width = 12,
+                           selectInput("map_filter_region", "Filtrer par région", choices = c("Toutes" = ""), multiple = FALSE),
+                           dateRangeInput("map_date_range", "Période", start = NULL, end = NULL),
+                           checkboxGroupInput("map_show_status", "Afficher statut", 
+                                              choices = c("Valide" = "valid", "Invalide" = "invalid"),
+                                              selected = c("valid", "invalid")),
+                           actionButton("reset_map_filters", "Réinitialiser filtres", 
+                                        style = "width: 100%; margin-top: 10px;")
+                       )
+                ),
+                column(9,
+                       box(title = "Carte des questionnaires", status = "primary", width = 12, height = 600,
+                           leafletOutput("map", height = 550))
                 )
               )
       ),
       
-      # Onglet Carte
-      tabItem(tabName = "map",
-              box(title = "Carte des questionnaires", status = "primary", width = 12,
-                  leafletOutput("map", height = 600))
-      ),
-      
-      # Onglet Détails des incohérences
+      # Onglet Incohérences amélioré
       tabItem(tabName = "incoherences",
-              box(title = "Analyse des incohérences", status = "warning", width = 12,
-                  p("Ce tableau présente uniquement les questionnaires comportant des incohérences, avec des détails sur les problèmes détectés."),
-                  DTOutput("incoherences_table")),
+              fluidRow(
+                column(12,
+                       box(title = "Filtres des incohérences", status = "primary", width = 12, collapsible = TRUE,
+                           fluidRow(
+                             column(3, selectInput("incoherence_type", "Type d'incohérence", 
+                                                   choices = c("Tous" = ""))),
+                             column(3, selectInput("incoherence_region", "Région", 
+                                                   choices = c("Toutes" = ""))),
+                             column(3, dateRangeInput("incoherence_date_range", "Période", start = NULL, end = NULL)),
+                             column(3, actionButton("reset_incoherence_filters", "Réinitialiser", 
+                                                    style = "margin-top: 25px; width: 100%;"))
+                           )
+                       )
+                )
+              ),
+              fluidRow(
+                box(title = "Analyse des incohérences", status = "warning", width = 12,
+                    DTOutput("incoherences_table"))
+              ),
               fluidRow(
                 box(title = "Répartition des types d'incohérences", status = "danger", width = 6,
-                    plotOutput("incoherences_summary", height = 350)),
-                box(title = "Proportion des questionnaires valides/non valides", status = "info", width = 6,
-                    plotOutput("validity_piechart", height = 350))
+                    plotlyOutput("incoherences_summary", height = 350)),
+                box(title = "Tendance temporelle des incohérences", status = "info", width = 6,
+                    plotlyOutput("incoherences_trend", height = 350))
               )
       ),
       
-      # Onglet Données brutes
+      # Onglet Données brutes amélioré
       tabItem(tabName = "rawdata",
-              box(title = "Données brutes", status = "warning", width = 12,
-                  DTOutput("raw_data_table"))
+              fluidRow(
+                box(title = "Filtres des données", status = "primary", width = 12, collapsible = TRUE,
+                    fluidRow(
+                      column(3, selectInput("data_filter_region", "Région", choices = c("Toutes" = ""))),
+                      column(3, selectInput("data_filter_status", "Statut", 
+                                            choices = c("Tous" = "", "Valide" = "valid", "Invalide" = "invalid"))),
+                      column(3, dateRangeInput("data_date_range", "Période", start = NULL, end = NULL)),
+                      column(3, actionButton("reset_data_filters", "Réinitialiser", 
+                                             style = "margin-top: 25px; width: 100%;"))
+                    )
+                )
+              ),
+              fluidRow(
+                box(title = "Données brutes", status = "warning", width = 12,
+                    DTOutput("raw_data_table"))
+              )
+      ),
+      
+      # Nouvel onglet Visualisations
+      tabItem(tabName = "visualizations",
+              fluidRow(
+                box(title = "Distribution de l'âge des chefs de ménage par région", status = "primary", width = 6,
+                    plotlyOutput("age_distribution_region", height = 300)),
+                box(title = "Taille des ménages par région", status = "info", width = 6,
+                    plotlyOutput("household_size", height = 300))
+              ),
+              fluidRow(
+                box(title = "Comparaison des dépenses", status = "warning", width = 12,
+                    plotlyOutput("expenses_comparison", height = 350))
+              )
       )
     )
   )
@@ -236,12 +361,32 @@ server <- function(input, output, session) {
       new_data <- extract_coordinates(new_data) %>% check_incoherence()
       data(new_data)
       
+      # Mise à jour des options des filtres
+      if ("Region" %in% colnames(new_data)) {
+        regions <- sort(unique(na.omit(new_data$Region)))
+        updateSelectInput(session, "map_filter_region", choices = c("Toutes" = "", regions))
+        updateSelectInput(session, "incoherence_region", choices = c("Toutes" = "", regions))
+        updateSelectInput(session, "data_filter_region", choices = c("Toutes" = "", regions))
+      }
+      
+      # Mise à jour des options de type d'incohérence
+      alert_types <- unique(unlist(strsplit(new_data$alertes[new_data$alertes != "Aucune incohérence"], ", ")))
+      updateSelectInput(session, "incoherence_type", choices = c("Tous" = "", alert_types))
+      
+      # Mise à jour des plages de dates
+      if ("submission_date" %in% colnames(new_data)) {
+        date_range <- range(na.omit(new_data$submission_date))
+        updateDateRangeInput(session, "map_date_range", start = date_range[1], end = date_range[2])
+        updateDateRangeInput(session, "incoherence_date_range", start = date_range[1], end = date_range[2])
+        updateDateRangeInput(session, "data_date_range", start = date_range[1], end = date_range[2])
+      }
+      
       # Alertes pour les soumissions invalides
       invalid_data <- new_data %>% filter(alertes != "Aucune incohérence")
       if (nrow(invalid_data) > 0) {
         shinyalert(
           title = "Alertes d'incohérences détectées!",
-          text = paste0(nrow(invalid_data), " questionnaires présentent des incohérences. Consultez l'onglet 'Détails des incohérences' pour plus d'informations."),
+          text = paste0(nrow(invalid_data), " questionnaires présentent des incohérences. Consultez l'onglet 'Incohérences' pour plus d'informations."),
           type = "warning"
         )
       }
@@ -253,6 +398,114 @@ server <- function(input, output, session) {
       )
     }
   }
+  
+  # Données filtrées pour la carte
+  filtered_map_data <- reactive({
+    req(data())
+    d <- data()
+    
+    # Filtrage par région
+    if (!is.null(input$map_filter_region) && input$map_filter_region != "") {
+      d <- d %>% filter(Region == input$map_filter_region)
+    }
+    
+    # Filtrage par date
+    if (!is.null(input$map_date_range)) {
+      d <- d %>% filter(submission_date >= input$map_date_range[1] & 
+                          submission_date <= input$map_date_range[2])
+    }
+    
+    # Filtrage par statut
+    if (!is.null(input$map_show_status) && length(input$map_show_status) > 0) {
+      if (all(c("valid", "invalid") %in% input$map_show_status)) {
+        # Ne rien faire, tout afficher
+      } else if ("valid" %in% input$map_show_status) {
+        d <- d %>% filter(alertes == "Aucune incohérence")
+      } else if ("invalid" %in% input$map_show_status) {
+        d <- d %>% filter(alertes != "Aucune incohérence")
+      }
+    }
+    
+    return(d)
+  })
+  
+  # Données filtrées pour les incohérences
+  filtered_incoherence_data <- reactive({
+    req(data())
+    d <- data() %>% filter(alertes != "Aucune incohérence")
+    
+    # Filtrage par type d'incohérence
+    if (!is.null(input$incoherence_type) && input$incoherence_type != "") {
+      d <- d %>% filter(grepl(input$incoherence_type, alertes))
+    }
+    
+    # Filtrage par région
+    if (!is.null(input$incoherence_region) && input$incoherence_region != "") {
+      d <- d %>% filter(Region == input$incoherence_region)
+    }
+    
+    # Filtrage par date
+    if (!is.null(input$incoherence_date_range)) {
+      d <- d %>% filter(submission_date >= input$incoherence_date_range[1] & 
+                          submission_date <= input$incoherence_date_range[2])
+    }
+    
+    return(d)
+  })
+  
+  # Données filtrées pour les données brutes
+  filtered_raw_data <- reactive({
+    req(data())
+    d <- data()
+    
+    # Filtrage par région
+    if (!is.null(input$data_filter_region) && input$data_filter_region != "") {
+      d <- d %>% filter(Region == input$data_filter_region)
+    }
+    
+    # Filtrage par statut
+    if (!is.null(input$data_filter_status) && input$data_filter_status != "") {
+      if (input$data_filter_status == "valid") {
+        d <- d %>% filter(alertes == "Aucune incohérence")
+      } else if (input$data_filter_status == "invalid") {
+        d <- d %>% filter(alertes != "Aucune incohérence")
+      }
+    }
+    
+    # Filtrage par date
+    if (!is.null(input$data_date_range)) {
+      d <- d %>% 
+        filter(submission_date >= input$data_date_range[1] & 
+                 submission_date <= input$data_date_range[2])
+    }
+    
+    return(d)
+  })
+  
+  # Réinitialisation des filtres
+  observeEvent(input$reset_map_filters, {
+    req(data())
+    date_range <- range(na.omit(data()$submission_date))
+    updateSelectInput(session, "map_filter_region", selected = "")
+    updateDateRangeInput(session, "map_date_range", start = date_range[1], end = date_range[2])
+    updateCheckboxGroupInput(session, "map_show_status", selected = c("valid", "invalid"))
+  })
+  
+  observeEvent(input$reset_incoherence_filters, {
+    req(data())
+    date_range <- range(na.omit(data()$submission_date))
+    updateSelectInput(session, "incoherence_type", selected = "")
+    updateSelectInput(session, "incoherence_region", selected = "")
+    updateDateRangeInput(session, "incoherence_date_range", start = date_range[1], end = date_range[2])
+  })
+  
+  observeEvent(input$reset_data_filters, {
+    req(data())
+    date_range <- range(na.omit(data()$submission_date))
+    updateSelectInput(session, "data_filter_region", selected = "")
+    updateSelectInput(session, "data_filter_status", selected = "")
+    updateDateRangeInput(session, "data_date_range", start = date_range[1], end = date_range[2])
+  })
   
   # Rafraîchissement initial et périodique
   observe({ refresh_data() }, priority = 1000)
@@ -277,10 +530,35 @@ server <- function(input, output, session) {
              "Questionnaires invalides", icon = icon("exclamation-triangle"), color = "red")
   })
   
+  output$completion_rate <- renderValueBox({
+    req(data())
+    valid_percent <- round(100 * sum(data()$alertes == "Aucune incohérence", na.rm = TRUE) / nrow(data()), 1)
+    valueBox(paste0(valid_percent, "%"), "Taux de validité", icon = icon("percent"), color = "purple")
+  })
+  
+  # Graphique d'activité
+  output$activity_chart <- renderPlotly({
+    req(data())
+    if (!"submission_date" %in% colnames(data())) return(NULL)
+    
+    activity_data <- data() %>%
+      count(date = submission_date, status = ifelse(alertes == "Aucune incohérence", "Valide", "Invalide"))
+    
+    if (nrow(activity_data) == 0) return(NULL)
+    
+    p <- ggplot(activity_data, aes(x = date, y = n, fill = status)) +
+      geom_col() +
+      scale_fill_manual(values = c("Valide" = "#4CAF50", "Invalide" = "#F44336")) +
+      labs(x = "Date", y = "Nombre de questionnaires", title = "Activité de collecte") +
+      theme_minimal() +
+      theme(legend.title = element_blank())
+    
+    ggplotly(p) %>% config(displayModeBar = FALSE)
+  })
+  
   # Carte
   output$map <- renderLeaflet({
-    req(data())
-    map_data <- data() %>% filter(!is.na(latitude) & !is.na(longitude))
+    map_data <- filtered_map_data() %>% filter(!is.na(latitude) & !is.na(longitude))
     
     if (nrow(map_data) == 0) {
       return(leaflet() %>% 
@@ -290,10 +568,10 @@ server <- function(input, output, session) {
     }
     
     popups <- paste0(
-      "<strong>ID:</strong> ", map_data$`_uuid`, "<br>",
+      "<strong>ID:</strong> ", substr(map_data$`_uuid`, 1, 8), "...<br>",
       "<strong>Région:</strong> ", map_data$Region, "<br>",
       "<strong>Localité:</strong> ", map_data$localit, "<br>",
-      "<strong>Date:</strong> ", map_data$`_submission_time`, "<br>",
+      "<strong>Date:</strong> ", format(map_data$submission_date, "%d/%m/%Y"), "<br>",
       "<strong>Alerte:</strong> ", map_data$alertes
     )
     
@@ -315,14 +593,12 @@ server <- function(input, output, session) {
   
   # Tableau des incohérences
   output$incoherences_table <- renderDT({
-    req(data())
-    incoherences_data <- data() %>%
-      filter(alertes != "Aucune incohérence") %>%
+    incoherences_data <- filtered_incoherence_data() %>%
       select(
         ID = `_uuid`,
         Region = `Region`, 
         Localite = `localit`,
-        Date_Soumission = `_submission_time`,
+        Date_Soumission = `submission_date`,
         Type_Alerte = `alertes`,
         Details = `details_incoherence`
       )
@@ -355,33 +631,179 @@ server <- function(input, output, session) {
   )
   
   # Graphique des types d'incohérences
-  output$incoherences_summary <- renderPlot({
+  # Remplacer renderPlot par renderPlotly pour incoherences_summary
+  output$incoherences_summary <- renderPlotly({
     req(data())
     incoherences_data <- data() %>% filter(alertes != "Aucune incohérence")
     
     if(nrow(incoherences_data) == 0) {
-      plot(0, 0, type = "n", axes = FALSE, xlab = "", ylab = "", main = "Aucune incohérence détectée")
-      return()
+      return(plot_ly() %>% 
+               add_annotations(text = "Aucune incohérence détectée", 
+                               showarrow = FALSE, font = list(size = 16)))
     }
     
-    summary_data <- incoherences_data %>%
-      count(alertes) %>%
-      arrange(desc(n)) %>%
-      mutate(alertes = factor(alertes, levels = alertes))
+    # Extraire tous les types d'incohérences
+    all_alerts <- unlist(strsplit(incoherences_data$alertes, ", "))
+    summary_data <- data.frame(alerte = all_alerts) %>%
+      count(alerte) %>%
+      arrange(n)  # Tri pour un meilleur affichage horizontal
     
-    ggplot(summary_data, aes(x = reorder(alertes, n), y = n, fill = alertes)) +
-      geom_bar(stat = "identity") +
-      geom_text(aes(label = n), hjust = -0.3, size = 4) +
-      coord_flip() +
-      labs(x = NULL, y = "Nombre d'occurrences") +
-      ggtitle(" Incohérences détectées") +
-      theme_minimal() +
-      theme(legend.position = "none",
-            plot.title = element_text(hjust = 0, size = 14, face = "bold", margin = margin(b = 20)),
-            axis.text.y = element_text(size = 10),
-            axis.text.x = element_text(size = 9),
-            panel.grid.major.y = element_blank())
+    # Création de l'histogramme horizontal
+    plot_ly(summary_data, 
+            y = ~reorder(alerte, n),  # Inversion des axes
+            x = ~n, 
+            type = "bar",
+            orientation = "h",  # Orientation horizontale
+            marker = list(color = "#FF7043",
+                          line = list(color = "#E65100", width = 1))) %>%
+      layout(title = "Répartition des types d'incohérences",
+             yaxis = list(title = "", tickfont = list(size = 12)),
+             xaxis = list(title = "Nombre d'occurrences"),
+             margin = list(l = 200)  # Marge gauche plus large pour les libellés
+      )
   })
+  
+  # Ajouter les graphiques manquants
+  output$regions_issues <- renderPlotly({
+    req(data())
+    issues_by_region <- data() %>%
+      filter(alertes != "Aucune incohérence") %>%
+      count(Region) %>%
+      arrange(desc(n))
+    
+    if(nrow(issues_by_region) == 0) {
+      return(plot_ly() %>% 
+               add_annotations(text = "Aucune incohérence par région", 
+                               showarrow = FALSE, font = list(size = 16)))
+    }
+    
+    plot_ly(issues_by_region, x = ~Region, y = ~n, type = "bar", 
+            marker = list(color = "#FF5722")) %>%
+      layout(title = "Incohérences par région",
+             xaxis = list(title = ""),
+             yaxis = list(title = "Nombre d'incohérences"))
+  })
+  
+  output$incoherences_types <- renderPlotly({
+    req(data())
+    
+    # Extraire tous les types d'incohérences
+    incoherences_data <- data() %>% filter(alertes != "Aucune incohérence")
+    
+    if(nrow(incoherences_data) == 0) {
+      return(plot_ly() %>% 
+               add_annotations(text = "Aucune incohérence détectée", 
+                               showarrow = FALSE, font = list(size = 16)))
+    }
+    
+    all_alerts <- unlist(strsplit(incoherences_data$alertes, ", "))
+    incoherence_counts <- table(all_alerts)
+    pie_data <- data.frame(
+      type = names(incoherence_counts),
+      count = as.numeric(incoherence_counts)
+    )
+    
+    plot_ly(pie_data, labels = ~type, values = ~count, type = 'pie',
+            textposition = 'inside',
+            textinfo = 'label+percent',
+            insidetextfont = list(color = '#FFFFFF'),
+            marker = list(colors = colorRampPalette(c("#FF5722", "#FFEB3B"))(nrow(pie_data)))) %>%
+      layout(title = "Répartition des types d'incohérences",
+             showlegend = FALSE)
+  })
+  
+  output$incoherences_trend <- renderPlotly({
+    req(data())
+    if(!"submission_date" %in% colnames(data())) return(NULL)
+    
+    trend_data <- data() %>%
+      mutate(status = ifelse(alertes == "Aucune incohérence", "Valide", "Invalide")) %>%
+      count(date = submission_date, status) %>%
+      pivot_wider(names_from = status, values_from = n, values_fill = list(n = 0)) %>%
+      mutate(pourcentage_invalide = ifelse(Valide + Invalide > 0, 
+                                           100 * Invalide / (Valide + Invalide), 0))
+    
+    if(nrow(trend_data) == 0) return(NULL)
+    
+    plot_ly() %>%
+      add_trace(data = trend_data, x = ~date, y = ~pourcentage_invalide, 
+                type = 'scatter', mode = 'lines+markers',
+                name = "% Invalide", line = list(color = '#E53935')) %>%
+      layout(title = "Évolution du taux d'incohérences",
+             xaxis = list(title = "Date"),
+             yaxis = list(title = "% de questionnaires invalides", rangemode = "tozero"))
+  })
+  
+  # Ajouter les graphiques pour l'onglet Visualisations
+ 
+  output$household_size <- renderPlotly({
+    req(data())
+    if(!"Combien_de_personnes_vent_dans_le_m_nage_" %in% colnames(data()) || 
+       !"Region" %in% colnames(data())) return(NULL)
+    
+    household_data <- data() %>%
+      filter(!is.na(Combien_de_personnes_vent_dans_le_m_nage_), !is.na(Region)) %>%
+      group_by(Region) %>%
+      summarize(taille_moyenne = mean(as.numeric(Combien_de_personnes_vent_dans_le_m_nage_), na.rm = TRUE))
+    
+    if(nrow(household_data) == 0) return(NULL)
+    
+    plot_ly(household_data, x = ~Region, y = ~taille_moyenne, type = "bar",
+            marker = list(color = "#26A69A")) %>%
+      layout(title = "Taille moyenne des ménages par région",
+             xaxis = list(title = "Région"),
+             yaxis = list(title = "Nombre moyen de personnes"))
+  })
+  
+  output$expenses_comparison <- renderPlotly({
+    req(data())
+    expense_cols <- c("Quel_est_la_d_pense_mensuelle_du_m_nage_", 
+                      "Quelle_est_la_d_pens_e_du_m_nage_exact_")
+    
+    if(!all(expense_cols %in% colnames(data()))) return(NULL)
+    
+    expenses_data <- data() %>%
+      filter(!is.na(Quel_est_la_d_pense_mensuelle_du_m_nage_) & 
+               !is.na(Quelle_est_la_d_pens_e_du_m_nage_exact_)) %>%
+      mutate(
+        estimee = as.numeric(Quel_est_la_d_pense_mensuelle_du_m_nage_),
+        exacte = as.numeric(Quelle_est_la_d_pens_e_du_m_nage_exact_)
+      ) %>%
+      select(Region, estimee, exacte) %>%
+      group_by(Region) %>%
+      summarize(
+        Dépense_estimée = mean(estimee, na.rm = TRUE),
+        Dépense_exacte = mean(exacte, na.rm = TRUE)
+      ) %>%
+      pivot_longer(cols = c(Dépense_estimée, Dépense_exacte), 
+                   names_to = "Type", values_to = "Montant")
+    
+    if(nrow(expenses_data) == 0) return(NULL)
+    
+    plot_ly(expenses_data, x = ~Region, y = ~Montant, color = ~Type, type = "bar",
+            colors = c("#7986CB", "#4DB6AC")) %>%
+      layout(title = "Comparaison des dépenses estimées et exactes par région",
+             xaxis = list(title = "Région"),
+             yaxis = list(title = "Montant moyen (FCFA)"),
+             barmode = "group")
+  })
+  
+  # Téléchargement CSV
+  output$download_csv <- downloadHandler(
+    filename = function() paste("donnees_kobo_", Sys.Date(), ".csv", sep = ""),
+    content = function(file) write.csv(data(), file, row.names = FALSE)
+  )
+  
+  # Téléchargement des incohérences
+  output$download_incoherences <- downloadHandler(
+    filename = function() paste("incoherences_kobo_", Sys.Date(), ".xlsx", sep = ""),
+    content = function(file) {
+      incoherences_data <- data() %>% 
+        filter(alertes != "Aucune incohérence") %>%
+        select(ID = `_uuid`, Region, localit, submission_date, alertes, details_incoherence)
+      writexl::write_xlsx(incoherences_data, path = file)
+    }
+  )
   
   # Graphique en camembert 
   output$validity_piechart <- renderPlot({
@@ -406,8 +828,88 @@ server <- function(input, output, session) {
   
   # Tableau de données brutes
   output$raw_data_table <- renderDT({
+    req(filtered_raw_data())
+    
+    # Sélection des colonnes à afficher (ajustez selon vos besoins)
+    display_data <- filtered_raw_data() %>%
+      select(
+        ID = `_uuid`,
+        Date = submission_date,
+        Region,
+        Localité = localit,
+        `Âge CM` = Age_du_CM,
+        `Taille ménage` = Combien_de_personnes_vent_dans_le_m_nage_,
+        Statut = alertes,
+        `Détails incohérences` = details_incoherence
+      )
+    
+    datatable(
+      display_data,
+      extensions = c('Buttons', 'Scroller'),
+      options = list(
+        scrollX = TRUE,
+        scrollY = 500,
+        scroller = TRUE,
+        dom = 'Bfrtip',
+        buttons = c('copy', 'csv', 'excel', 'pdf'),
+        pageLength = 25,
+        language = list(
+          search = "Rechercher:",
+          paginate = list(previous = 'Précédent', `next` = 'Suivant')
+        )
+      ),
+      rownames = FALSE,
+      filter = 'top'  # Ajoute des filtres individuels pour chaque colonne
+    ) 
+  })
+  output$age_distribution_region <- renderPlotly({
     req(data())
-    datatable(data(), options = list(scrollX = TRUE))
+    
+    # 1. Vérification des colonnes nécessaires
+    if(!"Age_du_CM" %in% names(data()) || !"Region" %in% names(data())) {
+      showNotification("Colonnes 'Age_du_CM' ou 'Region' manquantes", type = "error")
+      return(NULL)
+    }
+    
+    # 2. Préparation des données avec vérification
+    plot_data <- data() %>%
+      mutate(
+        Age_du_CM = as.numeric(as.character(Age_du_CM)),
+        Region = as.character(Region)
+      ) %>%
+      filter(
+        !is.na(Age_du_CM), 
+        !is.na(Region),
+        Age_du_CM >= 15,
+        Age_du_CM <= 100
+      )
+    
+    # 3. Vérification si données disponibles
+    if(nrow(plot_data) == 0) {
+      showNotification("Aucune donnée valide pour le graphique", type = "warning")
+      return(NULL)
+    }
+    
+    # 4. Création du graphique avec paramètres optimisés
+    p <- plot_ly(
+      data = plot_data,
+      y = ~Age_du_CM,
+      color = ~Region,
+      type = "box",
+      boxpoints = "all",
+      jitter = 0.3,
+      pointpos = 0,
+      colors = "Set3"
+    ) %>%
+      layout(
+        title = "Distribution de l'âge par région",
+        xaxis = list(title = "Région"),
+        yaxis = list(title = "Âge (années)", range = c(15, 100)),
+        boxmode = "group",
+        margin = list(l = 50, r = 50, b = 100, t = 50)
+      )
+    
+    return(p)
   })
 }
 
