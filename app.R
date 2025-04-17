@@ -1,7 +1,7 @@
 # Chargement des bibliothèques nécessaires
 library(shiny)
 library(httr)
-library(jsonlite)
+
 library(leaflet)
 library(DT)
 library(shinydashboard)

@@ -1,0 +1,114 @@
+---
+title: "Suivi de la collecte des données avec R"
+author: |
+  **ONANENA AMANA Jeanne De La Flèche**  
+  **SOMA Ben Idriss Diloma**
+date: |
+  **Avril 2025**  
+  
+  _Sous la supervision de : M. Abdoulaye HEMA_  
+  _Année scolaire : 2024–2025_
+output:
+  beamer_presentation:
+    theme: "Antibes"
+    colortheme: "whale"
+    toc: true
+    slide_level: 2
+fontsize: 11pt
+---
+
+## Introduction
+
+Le suivi de la collecte vise à s’assurer que les informations recueillies sur le terrain sont correctes et complètes. Il permet de détecter les erreurs, incohérences ou oublis dans les données. Ce projet utilise R pour automatiser ce suivi et améliorer la fiabilité des enquêtes. L’objectif final est de garantir la qualité des données collectées.
+
+# Guide Méthodologique de Suivi d'Enquête avec R
+
+## Stratégie de Suivi avec R
+
+### Objectifs
+
+- Comprendre l'importance du suivi des enquêtes.
+- Explorer des outils R pour le suivi.
+- Étudier un cas pratique : suivi d'une enquête sur la sécurité alimentaire.
+
+# Fondements théoriques (1/2)
+
+- **Fiabilité** : Les réponses sont cohérentes et stables si les conditions de collecte restent les mêmes.
+- **Validité** :  Les données reflètent fidèlement la réalité étudiée.
+- **Précision** :  Les données sont proches de la valeur réelle, avec peu d’erreurs.
+
+# Fondements théoriques (2/2)
+
+- **Complétude** : Toutes les questions ont été répondues sans données manquantes.
+- **Consistance** : Les réponses sont logiquement compatibles entre elles.
+- **Traçabilité** : On peut retracer l’origine et le contexte de chaque donnée.
+
+# Méthodologie de suivi
+
+- Utilisation de R pour :
+  - Contrôle qualité automatisé
+  - Visualisation géographique des points de collecte
+  - Détection d’anomalies et incohérences dans les réponses
+
+# Cas Pratique : Suivi d'une enquête sur la sécurité alimentaire
+
+## Contexte
+
+Application R Shiny développée pour suivre en temps réel une enquête sur la sécurité alimentaire via KoboToolbox, axée sur l’accès, la disponibilité et l’utilisation des aliments par les ménages.
+
+- **La disponibilité** des produits alimentaires.
+- **L'accès** aux produits alimentaires, en particulier pour les ménages vulnérables.
+- **L’utilisation** de ces produits dans la nutrition des ménages.
+
+Cette enquête, essentielle dans les contextes de vulnérabilité alimentaire, utilise R Shiny connecté à KoboToolbox pour assurer un suivi en temps réel et garantir la qualité des données collectées sur le terrain.
+
+\newpage
+
+## Objectifs du Cas Pratique
+
+Le principal objectif de ce cas pratique était de démontrer comment utiliser **R Shiny** pour :
+1. **Contrôler la qualité des données** collectées dans l’enquête. Cela inclut la vérification de la complétude des données, des incohérences potentielles, et des erreurs dans les entrées des enquêteurs.
+2. **Suivre géographiquement** la collecte des données, en utilisant des cartes interactives pour visualiser la répartition des points de collecte.
+3. **Détecter des anomalies** dans les réponses des enquêteurs, telles que des incohérences géographiques ou des erreurs temporelles.
+
+\newpage
+
+## Méthodes utilisées
+
+L’application R Shiny, connectée à l’API de KoboToolbox, permet un traitement automatisé des données collectées via trois fonctionnalités clés :
+
+1. **Contrôle qualité :** détection des réponses incomplètes ou erronées.
+
+2. **Cartographie interactive :** localisation des points de collecte avec leaflet pour identifier les zones à risque ou sous-couvertes.
+
+3. **Détection d’anomalies :** repérage automatique des incohérences comme des GPS invalides ou des horaires suspects.
+
+\newpage
+
+## Application concrète de l'outil
+
+Sur le terrain, les enquêteurs remplissent des questionnaires sur KoboToolbox, envoyés automatiquement à l’application R Shiny via l’API. L’application vérifie en temps réel :
+
+- La validité de la localisation des réponses.
+
+- Le taux de complétude de chaque questionnaire.
+
+- La cohérence des données, comme la correspondance des dates avec la période de l'enquête.
+
+Les résultats sont affichés dans des tableaux et des cartes interactives, permettant aux responsables de suivre la collecte et résoudre rapidement les problèmes.
+
+\newpage
+
+## Résultats attendus
+
+L’objectif final est d'assurer un suivi efficace et transparent des données, permettant de :
+
+1. **Garantir la qualité des données :*** détection et correction immédiates des erreurs pour réduire les anomalies.
+
+2. **Améliorer la couverture géographique :** identification des zones sous-représentées grâce aux cartes interactives.
+
+3. **Accélérer la prise de décision :** intervention rapide sur le terrain grâce à l’automatisation et à la visualisation des données.
+
+## Conclusion
+
+Ce cas pratique montre l’intérêt de l’intégration de technologies modernes, comme **R Shiny** et **KoboToolbox**, dans le suivi des enquêtes. L’utilisation de R permet de faciliter non seulement le contrôle de la qualité des données collectées, mais aussi d’assurer une gestion efficace des informations sur une plateforme interactive, ce qui est essentiel pour la réussite des enquêtes complexes, en particulier dans les contextes où la rapidité et la précision sont cruciales.

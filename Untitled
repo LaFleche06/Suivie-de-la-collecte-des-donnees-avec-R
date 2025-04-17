@@ -1,0 +1,169 @@
+---
+title: "Suivi de la collecte des données avec R"
+author: "ONANENA AMANA Jeanne De La Flèche  \nSOMA Ben Idriss Diloma\n"
+date: "2025-03-27"
+output:
+  beamer_presentation:
+    theme: CambridgeUS
+    colortheme: beaver
+    toc: true
+    slide_level: 2
+  ioslides_presentation: default
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+---
+
+## Introduction
+
+- Suivi efficace de la qualité des données collectées sur le terrain
+- Application développée en **R Shiny** connectée à **KoboToolbox**
+- Permet un contrôle **automatisé**, **visuel** et **interactif** des données
+
+---
+
+
+# Guide Méthodologique de Suivi d'Enquête avec R
+
+## 1. Stratégie de Suivi avec R
+
+### 1.1 Objectifs
+
+- Assurer la qualité des données
+
+    Vérifier la validité des réponses
+
+    Corriger les erreurs ou incohérences
+
+- Vérifier la localisation des enquêteurs
+
+    Assurer une couverture géographique correcte
+
+    Contrôler les coordonnées GPS
+
+- Contrôler l'intégrité des données collectées
+
+    Prévenir les doublons et erreurs
+
+    Valider la temporalité des réponses
+    
+---
+
+## Contexte de l'enquête
+
+- L'application a été testée avec une **enquête sur la sécurité alimentaire**
+- Données collectées via **[KoboToolbox](https://ee.kobotoolbox.org/x/KXeuihLd)** auprès de ménages
+- Objectifs de l’enquête :
+  - Évaluer la **disponibilité**, l’**accès** et l’**utilisation** des denrées alimentaires
+  - Identifier les **ménages vulnérables**
+  - Fournir des indicateurs clés pour guider les **interventions**
+
+---
+
+
+### 1.2 Outils Utilisés
+
+#### Connexion aux données externes  
+- **httr** : récupération automatique depuis KoboToolbox via API
+
+#### Manipulation et nettoyage des données  
+- **dplyr**, **tidyr** : manipulation et nettoyage des données  
+- **lubridate** : gestion des dates et heures  
+- **sf**, **geosphere** : géolocalisation et calculs de distances
+
+#### Analyse et visualisation  
+- **ggplot2** : création de graphiques  
+- **leaflet** : cartes interactives  
+- **DT** : tableaux interactifs pour les rapports  
+- **writexl** : exportation vers Excel
+
+#### Développement d’application  
+- **shiny**, **shinydashboard** : création d’une interface utilisateur  
+- **shinyalert** : alertes utilisateur dans l’application
+
+
+## 2. Étapes de Validation
+
+### 2.1 Préparation des Données
+
+- Extraction des coordonnées GPS 
+- Détection des coordonnées **manquantes ou invalides**
+- Affichage des points sur une **carte dynamique** Leaflet
+
+
+### 2.2 Mécanismes de Contrôle
+
+- **Validation géographique** : cohérence des points GPS
+- **Contrôle temporel** : durée de l'enquête raisonnable
+- **Cohérence des champs** : absence de doublons, réponses obligatoires
+- **Détection d'anomalies** : incohérences logiques ou valeurs suspectes
+
+---
+
+### 2.3 Cohérence des Champs
+
+#### Exemples d'incohérences détectées
+
+- **Écart entre dépenses estimées et réelles** : des différences importantes ont été relevées entre les montants estimés et les montants exacts déclarés.
+- **Âge improbable du chef de ménage** : certains chefs de ménage ont un âge déclaré inférieur à 15 ans ou supérieur à 120 ans.
+- **Répartition démographique incohérente** : le nombre de femmes déclaré est supérieur au nombre total de membres du ménage.
+- **Champs obligatoires manquants** : certaines réponses attendues (obligatoires) n'ont pas été renseignées.
+---
+
+### 2.4 Détection des Anomalies
+
+- Chaque soumission est annotée :
+  - Aucune incohérence"
+  - Alertes" avec description détaillée
+- Synthèse disponible dans un onglet dédié
+
+---
+
+## 3. Génération de Rapports
+
+- Statistiques globales :
+  - Nombre total de soumissions
+  - Nombre de soumissions valides
+  - Nombre d’incohérences détectées
+- Export des données en **XLS**
+- Accès aux **données brutes**, au **log des incohérences** et à la carte
+
+---
+
+## 4. Visualisation Cartographique
+
+- Carte interactive Leaflet intégrée dans l’app
+- Points colorés selon validité :
+  -  Donnée valide
+  -  Incohérence détectée
+- Supervision **visuelle rapide**
+
+---
+
+## 5. Workflow de Validation
+
+1. **Connexion** à l’API KoboToolbox
+2. **Récupération** et **nettoyage initial** des données
+3. **Extraction GPS** et contrôle logique
+4. **Détection automatisée** des incohérences
+5. **Génération des indicateurs** et export
+6. **Affichage sur carte interactive**
+
+---
+
+## Conclusion
+
+- Application **simple**, **robuste** et **réutilisable**
+- Adaptable à tout type d’enquête **géolocalisée**
+- Intégration facile avec **KoboToolbox**
+- Évolution possible avec :
+  - Contrôle de durée
+  - Analyse temporelle
+  - Statistiques plus poussées
+
+---
+
+## Merci pour votre attention !
