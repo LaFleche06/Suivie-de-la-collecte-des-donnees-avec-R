@@ -6,7 +6,7 @@ author: |
 date: |
   **Avril 2025**  
   
-  _Sous la supervision de : M. Abdoulaye HEMA_  
+  _Sous la supervision de : M. Aboubacar HEMA_  
   _Année scolaire : 2024–2025_
 output:
   beamer_presentation:
