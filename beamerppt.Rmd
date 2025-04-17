@@ -5,14 +5,15 @@ author: |
   **SOMA Ben Idriss Diloma**
 date: |
   **Avril 2025**  
-  
-  _Sous la supervision de : M. Abdoulaye HEMA_  
+  _Sous la supervision de : M. Aboubacar HEMA_  
   _Année scolaire : 2024–2025_
 output:
+  beamer_presentation: default
   powerpoint_presentation:
-    theme: "Antibes"
-    colortheme: "whale"
+    theme: Antibes
+    colortheme: whale
 ---
+
 
 ## Introduction
 
