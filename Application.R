@@ -862,6 +862,24 @@ server <- function(input, output, session) {
       filter = 'top'  # Ajoute des filtres individuels pour chaque colonne
     ) 
   })
+  # Dans votre serveur Shiny
+  output$duree_enquete <- renderPlotly({
+    req(data())
+    
+    # Calcul de la durée (adapté du script HFC)
+    donnees <- data() %>%
+      mutate(duration = as.numeric(difftime(endtime, starttime, units = "mins")))
+    
+    # Détection des valeurs aberrantes
+    outliers <- scores(donnees$duration[!is.na(donnees$duration)], type = "z")
+    
+    # Visualisation
+    plot_ly(donnees, y = ~duration, type = "box", 
+            boxpoints = "all", jitter = 0.3,
+            pointpos = 0, name = "Durée (minutes)") %>%
+      layout(title = "Distribution des durées d'enquête",
+             yaxis = list(title = "Durée (minutes)"))
+  })
   output$age_distribution_region <- renderPlotly({
     req(data())
     
