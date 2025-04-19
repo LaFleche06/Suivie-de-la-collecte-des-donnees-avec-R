@@ -1,7 +1,6 @@
 # Chargement des bibliothèques nécessaires
 library(shiny)
 library(httr)
-library(jsonlite)
 library(leaflet)
 library(DT)
 library(shinydashboard)
@@ -13,6 +12,19 @@ library(tidyr)
 library(plotly)
 library(shinyWidgets)
 library(lubridate)
+library(officer)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(plotly)
+library(lubridate)
+library(scales)
+library(officer)
+library(flextable)
+library(docxtractr)  # Pour la conversion en PDF
+
 
 # Configuration API KoboToolbox
 token <- Sys.getenv("token")
@@ -254,7 +266,9 @@ ui <- dashboardPage(
                     downloadButton("download_csv", "Télécharger en CSV", 
                                    style = "width: 100%; margin-bottom: 10px;"),
                     downloadButton("download_incoherences", "Télécharger incohérences",
-                                   style = "width: 100%;")
+                                   style = "width: 100%; margin-bottom: 10px;"),
+                    downloadButton("download_report", "Télécharger le rapport",
+                                   style = "width: 100%; background-color: #673AB7; color: white;")
                 )
               ),
               fluidRow(
@@ -509,7 +523,7 @@ server <- function(input, output, session) {
   
   # Rafraîchissement initial et périodique
   observe({ refresh_data() }, priority = 1000)
-  observeEvent(reactiveTimer(60000)(), { refresh_data() })
+  observeEvent(reactiveTimer(120000)(), { refresh_data() })
   observeEvent(input$refresh_button, { refresh_data() })
   
   # Value boxes
@@ -541,19 +555,53 @@ server <- function(input, output, session) {
     req(data())
     if (!"submission_date" %in% colnames(data())) return(NULL)
     
+    # 1. Préparation rigoureuse des données
     activity_data <- data() %>%
-      count(date = submission_date, status = ifelse(alertes == "Aucune incohérence", "Valide", "Invalide"))
+      mutate(
+        date = as.Date(submission_date),  # Conversion explicite en Date
+        status = factor(ifelse(alertes == "Aucune incohérence", "Valide", "Invalide"),
+                        levels = c("Valide", "Invalide"))
+      ) %>%
+      count(date, status, .drop = FALSE)  # Garde toutes les combinaisons
     
-    if (nrow(activity_data) == 0) return(NULL)
+    # 2. Création du graphique avec plot_ly pour plus de contrôle
+    p <- plot_ly(activity_data) %>%
+      add_bars(
+        x = ~date, 
+        y = ~n, 
+        color = ~status,
+        colors = c("Valide" = "#4CAF50", "Invalide" = "#F44336"),
+        width = 86400000,  # Largeur en ms (1 jour = 86400000 ms)
+        hoverinfo = "text",
+        text = ~paste("Date:", format(date, "%d %b %Y"),
+                      "<br>Statut:", status,
+                      "<br>Count:", n)
+      ) %>%
+      layout(
+        barmode = "group",  # Barres côte à côte
+        xaxis = list(
+          type = "date",
+          tickformat = "%d %b",  # Format jour + mois abrégé
+          tickmode = "auto",
+          nticks = 10,  # Nombre de ticks approximatif
+          title = ""
+        ),
+        yaxis = list(title = "Nombre de questionnaires"),
+        hovermode = "x unified",
+        showlegend = TRUE
+      )
     
-    p <- ggplot(activity_data, aes(x = date, y = n, fill = status)) +
-      geom_col() +
-      scale_fill_manual(values = c("Valide" = "#4CAF50", "Invalide" = "#F44336")) +
-      labs(x = "Date", y = "Nombre de questionnaires", title = "Activité de collecte") +
-      theme_minimal() +
-      theme(legend.title = element_blank())
+    # 3. Ajustement dynamique si peu de données
+    if (nrow(activity_data) < 10) {
+      p <- p %>% layout(
+        xaxis = list(
+          dtick = 86400000,  # 1 jour entre chaque tick
+          tick0 = min(activity_data$date)
+        )
+      )
+    }
     
-    ggplotly(p) %>% config(displayModeBar = FALSE)
+    return(p)
   })
   
   # Carte
@@ -929,6 +977,96 @@ server <- function(input, output, session) {
     
     return(p)
   })
+  # Ajouter dans la section du serveur, après les autres gestionnaires de téléchargement
+  
+  # Fonction pour générer un rapport simplifié mais professionnel
+  generate_kobo_report <- function(data, output_file) {
+    # Vérifier si les données existent
+    if (is.null(data) || nrow(data) == 0) {
+      stop("Aucune donnée disponible pour générer le rapport")
+    }
+    
+    # Créer un nouveau document Word
+    doc <- officer::read_docx()
+    
+    # Ajouter un en-tête avec logo et titre
+    doc <- doc %>%
+      officer::body_add_fpar(officer::fpar(
+        officer::ftext("Rapport d'enquête KoboToolbox", 
+                       officer::fp_text(font.size = 18, bold = TRUE, font.family = "Arial")))) %>%
+      officer::body_add_par("") %>%
+      officer::body_add_par(paste("Date du rapport:", format(Sys.Date(), "%d/%m/%Y"))) %>%
+      officer::body_add_par("")
+    
+    # 1. RÉSUMÉ GÉNÉRAL
+    doc <- doc %>%
+      officer::body_add_fpar(officer::fpar(
+        officer::ftext("1. Résumé de l'enquête", 
+                       officer::fp_text(font.size = 14, bold = TRUE)))) %>%
+      officer::body_add_par("")
+    
+    # Statistiques de base
+    total_submissions <- nrow(data)
+    valid_submissions <- sum(data$alertes == "Aucune incohérence", na.rm = TRUE)
+    invalid_submissions <- total_submissions - valid_submissions
+    validity_rate <- round(100 * valid_submissions / total_submissions, 1)
+    
+    summary_stats <- data.frame(
+      Statistique = c("Nombre total de questionnaires", 
+                      "Questionnaires valides", 
+                      "Questionnaires invalides", 
+                      "Taux de validité"),
+      Valeur = c(total_submissions, 
+                 valid_submissions, 
+                 invalid_submissions, 
+                 paste0(validity_rate, "%"))
+    )
+    
+    # Ajouter le tableau de statistiques générales
+    doc <- doc %>%
+      officer::body_add_par("Statistiques générales de l'enquête:") %>%
+      flextable::body_add_flextable(
+        flextable::flextable(summary_stats) %>% 
+          flextable::set_table_properties(width = 1, layout = "autofit") %>%
+          flextable::theme_vanilla() %>%
+          flextable::fontsize(size = 10, part = "all")
+      ) %>%
+      officer::body_add_par("")
+    
+    # Sauvegarder le document
+    print(doc, target = output_file)
+    
+    return(output_file)
+  }
+  
+  
+  output$download_report <- downloadHandler(
+    filename = function() {
+      paste("rapport_", format(Sys.Date(), "%Y%m%d"), ".pdf", sep = "")
+    },
+    content = function(file) {
+      # Créer un fichier temporaire Rmd
+      temp_rmd <- tempfile(fileext = ".Rmd")
+      
+      # Copier le contenu de votre template
+      writeLines(readLines("rapport_template.Rmd"), temp_rmd)
+      
+      # Paramètres à passer
+      params <- list(data = data())
+      
+      # Générer le PDF
+      rmarkdown::render(
+        input = temp_rmd,
+        output_file = file,
+        output_format = "pdf_document",
+        params = params,
+        envir = new.env(parent = globalenv()),
+        clean = TRUE
+      )
+    },
+    contentType = "application/pdf"
+  )
+
 }
 
 # Lancer l'application Shiny

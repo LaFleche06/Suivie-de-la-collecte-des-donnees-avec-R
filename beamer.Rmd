@@ -23,13 +23,16 @@ Le suivi de la collecte vise à s’assurer que les informations recueillies sur
 
 # Guide Méthodologique de Suivi d'Enquête avec R
 
-## Stratégie de Suivi avec R
+
 
 ### Objectifs
 
-- Comprendre l'importance du suivi des enquêtes.
-- Explorer des outils R pour le suivi.
-- Étudier un cas pratique : suivi d'une enquête sur la sécurité alimentaire.
+- Objectif géneral :  Concevoir et déployer une application R Shiny, intégrée à une application de collecte , pour assurer le suivi en temps réel de la collecte de données, garantir leur qualité et optimiser la supervision terrain
+- Objectifs spécifiques :  
+                          - Automatiser la récupération et l’analyse des questionnaires
+                          - Garantir la couverture géographique et la cohérence des données
+ 
+
 
 # Fondements théoriques (1/2)
 
@@ -46,7 +49,7 @@ Le suivi de la collecte vise à s’assurer que les informations recueillies sur
 # Méthodologie de suivi
 
 - Utilisation de R pour :
-  - Contrôle qualité automatisé
+  - Contrôle de  qualité automatisé
   - Visualisation géographique des points de collecte
   - Détection d’anomalies et incohérences dans les réponses
 
