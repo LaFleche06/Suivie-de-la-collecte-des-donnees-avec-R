@@ -1,0 +1,290 @@
+---
+title: "Rapport d'Analyse d'Enquête"
+author: "Équipe d'Analyse"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    latex_engine: xelatex
+    keep_tex: false
+params:
+  data: null
+header-includes:
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhead[CO,CE]{Rapport d'Enquête}
+- \fancyfoot[CO,CE]{Confidentiel}
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{array}
+- \usepackage{wrapfig}
+- \usepackage{float}
+- \usepackage{colortbl}
+- \usepackage{pdflscape}
+- \usepackage{tabu}
+- \usepackage{threeparttable}
+- \usepackage[normalem]{ulem}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = 'center'
+)
+
+```
+
+
+```{r, echo = FALSE}
+# Chargement des librairies
+# Chargement des librairies
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(plotly)
+library(lubridate)
+library(scales)
+library(flextable)
+
+
+
+```
+
+```{r}
+donnees <- params$data
+```
+
+# Résumé Exécutif
+
+
+Ce rapport présente un résumé détaillé des résultats de cette enquête menée via KoboToolbox. Cette analyse inclut des informations sur la couverture géographique, la qualité des données et les principales statistiques descriptives.
+
+
+# Statistiques Clés
+
+```{r}
+# Calcul des statistiques de base
+stats_calcul <- donnees %>%
+  summarise(
+    total = n(),
+    valide = sum(alertes == "Aucune incohérence", na.rm = TRUE),
+    invalide = total - valide,
+    taux_validite = round(100 * valide / total, 1)
+)
+
+stats <- data.frame(
+  "Statistique" = c("Total questionnaires", "Questionnaires valides", 
+                    "Questionnaires invalides", "Taux de validité"),
+  "Valeur" = c(stats_calcul$total, stats_calcul$valide, 
+               stats_calcul$invalide, paste0(stats_calcul$taux_validite, "%"))
+)
+
+flextable(stats) %>%
+  set_header_labels(Statistique = "Statistique", Valeur = "Valeur") %>%
+  bg(part = "header", bg = "#3c8dbc") %>%
+  color(part = "header", color = "white") %>%
+  align(align = "center", part = "all") %>%
+  width(width = c(3, 2)) %>%
+  fontsize(size = 11, part = "all")
+```
+
+#  Analyse des Données
+## Répartition par Région
+
+```{r}
+if ("Region" %in% names(donnees)) {
+  region_stats <- donnees %>%
+    group_by(Region) %>%
+    summarise(
+      Questionnaires = n(),
+      `% Valides` = round(100 * sum(alertes == "Aucune incohérence") / n(), 1),
+      `Incohérences` = sum(alertes != "Aucune incohérence"),
+      .groups = 'drop'
+    ) %>%
+    arrange(desc(Questionnaires))
+  
+  flextable(region_stats) %>%
+    bg(part = "header", bg = "#3c8dbc") %>%
+    color(part = "header", color = "white") %>%
+    align(align = "center", part = "all") %>%
+    width(width = c(2, 1.5, 1.5, 1.5)) %>%
+    fontsize(size = 10, part = "all")
+}
+```
+
+# Graphique d'Activité
+
+
+
+
+```{r, echo=FALSE}
+if ("submission_date" %in% names(donnees)) {
+  # Préparation des données identique à l'app Shiny
+  activity_data <- donnees %>%
+    mutate(date = as.Date(submission_date)) %>%
+    count(date, status = ifelse(alertes == "Aucune incohérence", "Valide", "Invalide")) %>%
+    arrange(date)  # Tri chronologique
+  
+  # Paramètres identiques à l'application
+  date_breaks <- seq(min(activity_data$date), max(activity_data$date), by = "day")
+  
+  # Graphique avec les mêmes spécifications que l'app
+  p <- ggplot(activity_data, aes(x = date, y = n, fill = status)) +
+    geom_col(position = position_dodge(width = 0.8), width = 0.7) +  # Barres séparées
+    scale_x_date(
+      breaks = date_breaks,
+      labels = scales::date_format("%d %b"),  # Format jour + mois abrégé
+      expand = c(0.01, 0.01)  # Réduit les marges
+    ) +
+    scale_fill_manual(values = c("Valide" = "#4CAF50", "Invalide" = "#F44336")) +
+    labs(x = NULL, y = "Nombre de questionnaires", 
+         title = "Activité de collecte par jour") +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_blank(),
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8)  # Rotation des dates
+    )
+  
+  print(p)
+}
+```
+
+# Analyse des Incohérences
+
+## Types d'Incohérences
+
+
+```{r}
+incoherences_exist <- sum(donnees$alertes != "Aucune incohérence", na.rm = TRUE) > 0
+
+if (incoherences_exist) {
+  incoherences_data <- donnees %>% 
+    filter(alertes != "Aucune incohérence")
+  
+  all_alerts <- unlist(strsplit(incoherences_data$alertes, ", "))
+  alert_counts <- as.data.frame(table(all_alerts)) %>%
+    arrange(desc(Freq))
+  
+  colnames(alert_counts) <- c("Type d'incohérence", "Nombre")
+  
+  flextable(alert_counts) %>%
+    bg(part = "header", bg = "#FF5722") %>%
+    color(part = "header", color = "white") %>%
+    align(align = "center", part = "all") %>%
+    width(width = c(3, 1)) %>%
+    fontsize(size = 10, part = "all")
+} else {
+  cat("Aucune incohérence détectée dans les données.")
+}
+```
+
+## Tendance des Incohérences
+
+```{r}
+if ("submission_date" %in% names(donnees) && incoherences_exist) {
+  trend_data <- donnees %>%
+    mutate(status = ifelse(alertes == "Aucune incohérence", "Valide", "Invalide")) %>%
+    count(date = submission_date, status) %>%
+    pivot_wider(names_from = status, values_from = n, values_fill = list(n = 0)) %>%
+    mutate(pourcentage_invalide = ifelse(Valide + Invalide > 0, 
+                                        100 * Invalide / (Valide + Invalide), 0))
+  
+  ggplot(trend_data, aes(x = date, y = pourcentage_invalide)) +
+    geom_line(color = "#E53935", size = 1) +
+    geom_point(color = "#E53935", size = 2) +
+    labs(x = "Date", y = "% de questionnaires invalides", 
+         title = "Évolution du taux d'incohérences") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+```
+
+
+
+## Âge des Chefs de Ménage
+
+```{r}
+if ("Age_du_CM" %in% names(donnees) && "Region" %in% names(donnees)) {
+  age_data <- donnees %>%
+    filter(!is.na(Age_du_CM), !is.na(Region)) %>%
+    mutate(Age_du_CM = as.numeric(as.character(Age_du_CM)))
+  
+  if (nrow(age_data) > 0) {
+    ggplot(age_data, aes(x = Age_du_CM, fill = Region)) +
+      geom_histogram(binwidth = 5, alpha = 0.7) +
+      labs(x = "Âge", y = "Nombre", 
+           title = "Distribution de l'âge des chefs de ménage") +
+      theme_minimal() +
+      theme(legend.position = "bottom",
+            plot.title = element_text(hjust = 0.5))
+  }
+}
+```
+
+
+## Comparaison des Dépenses
+
+```{r}
+expense_cols <- c("Quel_est_la_d_pense_mensuelle_du_m_nage_", 
+                 "Quelle_est_la_d_pens_e_du_m_nage_exact_")
+
+if (all(expense_cols %in% names(donnees))) {
+  expenses_data <- donnees %>%
+    filter(!is.na(Quel_est_la_d_pense_mensuelle_du_m_nage_) & 
+           !is.na(Quelle_est_la_d_pens_e_du_m_nage_exact_)) %>%
+    mutate(
+      estimee = as.numeric(Quel_est_la_d_pense_mensuelle_du_m_nage_),
+      exacte = as.numeric(Quelle_est_la_d_pens_e_du_m_nage_exact_)
+    )
+  
+  if (nrow(expenses_data) > 0) {
+    ggplot(expenses_data, aes(x = estimee, y = exacte)) +
+      geom_point(alpha = 0.5, color = "#673AB7") +
+      geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+      labs(x = "Dépense mensuelle estimée", y = "Dépense exacte",
+           title = "Comparaison des dépenses estimées et exactes") +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5))
+  }
+}
+```
+
+
+
+
+
+ 
+# Conclusions 
+
+```{r}
+# Préparer les informations pour les conclusions
+concl_region <- if ("Region" %in% names(donnees) && nrow(region_stats) > 0) {
+  region_stats$Region[1]
+} else {
+  "non disponible"
+}
+
+concl_incoherences <- if (exists("alert_counts") && nrow(alert_counts) > 0) {
+  paste(head(alert_counts[["Type d'incohérence"]], 3), collapse = ", ")
+} else {
+  "aucune incohérence majeure"
+}
+```
+
+
+Cette analyse met en évidence plusieurs aspects importants de la collecte de données :
+
+- Le taux global de validité des questionnaires est de `r stats_calcul$taux_validite`%
+
+- Les principales incohérences identifiées sont : `r concl_incoherences`
+
+- La distribution géographique montre une concentration dans la région `r concl_region`
+
